@@ -1,0 +1,6 @@
+{
+  "name": "Airplane Simulator",
+  "description": "A realistic 3D civilian aviation and airport simulator with authentic flight physics, procedural terrain, dynamic weather, and commercial airline operations.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
