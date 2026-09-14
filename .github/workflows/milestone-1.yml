@@ -1,8 +1,8 @@
-name: Milestone 1 Verification
+name: Simulator Verification
 
 on:
   push:
-    branches: ['main', 'milestone-1-vertical-slice']
+    branches: ['main']
   pull_request:
     branches: ['main']
 
@@ -20,7 +20,9 @@ jobs:
         run: bun install --frozen-lockfile
       - name: TypeScript verification
         run: bun run lint
-      - name: Simulation smoke tests
+      - name: Flight physics smoke tests
         run: bun run test:smoke
+      - name: Complete systems verification
+        run: bun run test:systems
       - name: Build production bundle
         run: bun run build
