@@ -125,9 +125,8 @@ export default function App() {
       const state = stateRef.current;
       const plan = flightPlanRef.current;
       state.timeCompression = timeCompressionRef.current;
-      const simDelta = deltaSec * timeCompressionRef.current;
 
-      simulationClockRef.current.advance(simDelta, (fixedDt) => {
+      simulationClockRef.current.advance(deltaSec, (fixedDt) => {
         if (!stateRef.current || !physicsRef.current) return;
         physicsRef.current.update(
           stateRef.current,
