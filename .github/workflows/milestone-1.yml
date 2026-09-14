@@ -18,5 +18,9 @@ jobs:
           bun-version: latest
       - name: Install dependencies
         run: bun install --frozen-lockfile
+      - name: TypeScript verification
+        run: bun run lint
+      - name: Simulation smoke tests
+        run: bun run test:smoke
       - name: Build production bundle
         run: bun run build
