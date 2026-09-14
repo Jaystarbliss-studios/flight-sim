@@ -7,21 +7,18 @@ const assert = (condition: unknown, message: string) => {
   if (!condition) throw new Error(`SMOKE TEST FAILED: ${message}`);
 };
 
-const makePlan = (aircraft = AIRCRAFTS[0]): FlightPlan => ({
-  aircraft,
-  origin: AIRPORTS[0],
-  destination: AIRPORTS[1],
-  cruisingAltitudeFt: 33000,
-  passengers: Math.min(120, aircraft.id === 'e195' ? 146 : aircraft.id === 'b777' ? 396 : 180),
-  maxPassengers: aircraft.id === 'e195' ? 146 : aircraft.id === 'b777' ? 396 : 180,
-  cargoKg: 2400,
-  fuelKg: Math.min(14000, aircraft.fuelCapacityKg),
-  weather: 'clear',
-  timeOfDay: 'day',
-  windSpeedKnots: 8,
-  windDirectionDeg: 250,
-  assistance: 'realistic',
-});
+const makePlan = (aircraft = AIRCRAFTS[0]): FlightPlan => {
+  const maxPassengers = aircraft.id === 'e195' ? 146 : aircraft.id === 'b777' ? 396 : 180;
+  const passengers = Math.min(120, maxPassengers);
+  const fuelKg = Math.min(14000, aircraft.fuelCapacityKg);
+  const availablePayload = Math.max(0, aircraft.maxTakeoffWeightKg - aircraft.emptyWeightKg - fuelKg);
+  const cargoKg = Math.min(2400, Math.max(0, availablePayload - passengers * 85));
+  return {
+    aircraft, origin: AIRPORTS[0], destination: AIRPORTS[1], cruisingAltitudeFt: 33000,
+    passengers, maxPassengers, cargoKg, fuelKg, weather: 'clear', timeOfDay: 'day',
+    windSpeedKnots: 8, windDirectionDeg: 250, assistance: 'realistic',
+  };
+};
 
 for (const aircraft of AIRCRAFTS) {
   const plan = makePlan(aircraft);
@@ -29,7 +26,7 @@ for (const aircraft of AIRCRAFTS) {
   const state = physics.initFlightState(38);
   assert(state.enginesRunning, `${aircraft.id}: engines should initialize running`);
   assert(state.gearDown && state.gearPosition === 1, `${aircraft.id}: landing gear should start down`);
-  assert(state.currentWeightKg <= aircraft.maxTakeoffWeightKg, `${aircraft.id}: default dispatch weight exceeds MTOW`);
+  assert(state.currentWeightKg <= aircraft.maxTakeoffWeightKg, `${aircraft.id}: dispatch weight exceeds MTOW`);
   state.throttle = 1;
   physics.update(state, 1 / 60, 38, plan.destination.worldX, plan.destination.worldZ);
   assert(state.n1 > 20, `${aircraft.id}: engine spool did not respond to throttle`);
