@@ -31,6 +31,7 @@ export default function App() {
     fuelKg: 14000, weather: 'clear', timeOfDay: 'day', windSpeedKnots: 6,
     windDirectionDeg: 250, assistance: 'beginner',
   }));
+  const flightPlanRef = useRef<FlightPlan>(flightPlan);
 
   const stateRef = useRef<FlightState | null>(null);
   const [uiState, setUiState] = useState<FlightState | null>(null);
@@ -40,6 +41,7 @@ export default function App() {
   const [showSetupModal, setShowSetupModal] = useState(false);
   const [showSettingsModal, setShowSettingsModal] = useState(false);
   const [flightSummary, setFlightSummary] = useState<FlightSummary | null>(null);
+  const flightSummaryRef = useRef<FlightSummary | null>(null);
   const [isMuted, setIsMuted] = useState(false);
   const [timeCompression, setTimeCompression] = useState(1);
   const [showDevMetrics, setShowDevMetrics] = useState(false);
@@ -50,16 +52,19 @@ export default function App() {
   const lastMousePosRef = useRef({ x: 0, y: 0 });
 
   const initSimulation = useCallback((plan: FlightPlan) => {
+    flightPlanRef.current = plan;
     const physics = new FlightPhysics(plan);
     physicsRef.current = physics;
     const initialRunwayAlt = plan.origin.runways[0]?.altitudeMeters || 38;
-    stateRef.current = physics.initFlightState(initialRunwayAlt);
+    const initialState = physics.initFlightState(initialRunwayAlt);
+    stateRef.current = initialState;
     simulationClockRef.current.reset();
     timeCompressionRef.current = 1;
+    flightSummaryRef.current = null;
     setTimeCompression(1);
-    setUiState({ ...stateRef.current });
-    atcRef.current.reset();
+    setUiState({ ...initialState });
     setFlightSummary(null);
+    atcRef.current.reset();
     setCurrentAtcMessage(atcRef.current.getTransmissionForPhase('takeoff_roll', plan));
     if (rendererRef.current) rendererRef.current.setPlan(plan);
   }, []);
@@ -69,9 +74,9 @@ export default function App() {
   useEffect(() => {
     const container = canvasContainerRef.current;
     if (!container) return;
-    const renderer = new WorldRenderer(container, flightPlan);
+    const renderer = new WorldRenderer(container, flightPlanRef.current);
     rendererRef.current = renderer;
-    initSimulation(flightPlan);
+    initSimulation(flightPlanRef.current);
 
     const handlePointerDown = (e: PointerEvent) => {
       if ((e.target as HTMLElement).tagName === 'CANVAS') {
@@ -116,22 +121,35 @@ export default function App() {
         fpsTimer = now;
       }
       if (!stateRef.current || !physicsRef.current || !rendererRef.current) return;
+
       const state = stateRef.current;
+      const plan = flightPlanRef.current;
       state.timeCompression = timeCompressionRef.current;
       const simDelta = deltaSec * timeCompressionRef.current;
+
       simulationClockRef.current.advance(simDelta, (fixedDt) => {
         if (!stateRef.current || !physicsRef.current) return;
-        physicsRef.current.update(stateRef.current, fixedDt,
-          flightPlan.origin.runways[0]?.altitudeMeters || 38,
-          flightPlan.destination.worldX, flightPlan.destination.worldZ);
+        physicsRef.current.update(
+          stateRef.current,
+          fixedDt,
+          flightPlanRef.current.origin.runways[0]?.altitudeMeters || 38,
+          flightPlanRef.current.destination.worldX,
+          flightPlanRef.current.destination.worldZ,
+        );
       });
+
       globalAudio.update(state);
       rendererRef.current.update(state, deltaSec);
-      const newAtc = atcRef.current.getTransmissionForPhase(state.phase, flightPlan);
+
+      const newAtc = atcRef.current.getTransmissionForPhase(state.phase, plan);
       if (newAtc) { setCurrentAtcMessage(newAtc); globalAudio.playChime(); }
-      if ((state.phase === 'gate_arrival' || state.phase === 'crashed') && !flightSummary) {
-        setFlightSummary(physicsRef.current.getFlightSummary(state));
+
+      if ((state.phase === 'gate_arrival' || state.phase === 'crashed') && !flightSummaryRef.current) {
+        const summary = physicsRef.current.getFlightSummary(state);
+        flightSummaryRef.current = summary;
+        setFlightSummary(summary);
       }
+
       if (frameCount % 3 === 0) setUiState({ ...state });
     };
     animId = requestAnimationFrame(tick);
@@ -173,7 +191,7 @@ export default function App() {
   const handleCameraChange = (mode: CameraMode) => { setCameraMode(mode); rendererRef.current?.setCameraMode(mode); };
   const handleToggleMute = () => setIsMuted(globalAudio.toggleMute());
   const handleConfirmPlan = (newPlan: FlightPlan) => { setFlightPlan(newPlan); setShowSetupModal(false); initSimulation(newPlan); };
-  const handleRestartFlight = () => initSimulation(flightPlan);
+  const handleRestartFlight = () => initSimulation(flightPlanRef.current);
 
   return (
     <div className="relative w-screen h-screen overflow-hidden bg-black select-none font-sans">
@@ -185,7 +203,7 @@ export default function App() {
       {uiState && <FlightControlsOverlay state={uiState} plan={flightPlan} cameraMode={cameraMode} onCameraChange={handleCameraChange} onPitchRoll={handlePitchRoll} onYaw={handleYaw} onThrottle={handleThrottle} onToggleGear={handleToggleGear} onFlapsChange={handleFlapsChange} onToggleSpoilers={handleToggleSpoilers} onToggleBrakes={handleToggleBrakes} onToggleReverseThrust={handleToggleReverseThrust} onToggleEngines={handleToggleEngines} onToggleAutopilot={handleToggleAutopilot} onToggleMute={handleToggleMute} isMuted={isMuted} onOpenSettings={() => setShowSettingsModal(true)} onResetFlight={handleRestartFlight} onOpenTutorial={() => setShowTutorial(true)} timeCompression={timeCompression} onSetTimeCompression={setTimeCompression} showCockpitInstruments={showCockpitInstruments} onToggleCockpitInstruments={() => setShowCockpitInstruments(!showCockpitInstruments)} />}
       {showSetupModal && <FlightSetupModal currentPlan={flightPlan} onConfirmPlan={handleConfirmPlan} onClose={() => setShowSetupModal(false)} />}
       {showSettingsModal && <SettingsModal assistance={flightPlan.assistance} onSetAssistance={(lvl) => setFlightPlan({ ...flightPlan, assistance: lvl })} showDevMetrics={showDevMetrics} onToggleDevMetrics={() => setShowDevMetrics(!showDevMetrics)} onClose={() => setShowSettingsModal(false)} />}
-      {flightSummary && <FlightResultModal summary={flightSummary} onRestart={handleRestartFlight} onClose={() => setFlightSummary(null)} />}
+      {flightSummary && <FlightResultModal summary={flightSummary} onRestart={handleRestartFlight} onClose={() => { flightSummaryRef.current = null; setFlightSummary(null); }} />}
     </div>
   );
 }
