@@ -16,6 +16,8 @@ export class AudioEngine {
   private groundGain: GainNode | null = null;
   private stallOsc: OscillatorNode | null = null;
   private stallGain: GainNode | null = null;
+  private afterburnerOsc: OscillatorNode | null = null;
+  private afterburnerGain: GainNode | null = null;
 
   private lastCalloutAlt = 99999;
   private hasSpokenRetard = false;
@@ -23,6 +25,7 @@ export class AudioEngine {
   private previousFlapsIndex: number | null = null;
   private previousPhase: FlightState['phase'] | null = null;
   private previousBrakes = false;
+  private previousMach = 0;
 
   public init() {
     if (this.isInitialized || typeof window === 'undefined') return;
@@ -82,6 +85,17 @@ export class AudioEngine {
       this.stallOsc.connect(this.stallGain).connect(this.master);
       this.stallOsc.start();
 
+      this.afterburnerOsc = this.ctx.createOscillator();
+      this.afterburnerOsc.type = 'sawtooth';
+      this.afterburnerOsc.frequency.value = 52;
+      const abFilter = this.ctx.createBiquadFilter();
+      abFilter.type = 'lowpass';
+      abFilter.frequency.value = 240;
+      this.afterburnerGain = this.ctx.createGain();
+      this.afterburnerGain.gain.value = 0;
+      this.afterburnerOsc.connect(abFilter).connect(this.afterburnerGain).connect(this.master);
+      this.afterburnerOsc.start();
+
       this.isInitialized = true;
     } catch {
       this.ctx = null;
@@ -104,13 +118,60 @@ export class AudioEngine {
       this.turbineOsc.frequency.setTargetAtTime(250 + n1 * 1100, t, 0.08);
     }
 
+    if (this.afterburnerGain) {
+      const abActive = Boolean(state.afterburnerActive && state.enginesRunning);
+      this.afterburnerGain.gain.setTargetAtTime(abActive ? 0.26 : 0, t, 0.06);
+    }
+
     this.windGain?.gain.setTargetAtTime(speed * speed * 0.2, t, 0.12);
     const groundLevel = !airborne && state.airspeedKnots > 4 ? Math.min(1, state.airspeedKnots / 150) : 0;
     this.groundGain?.gain.setTargetAtTime(groundLevel * 0.18, t, 0.07);
     this.stallGain?.gain.setTargetAtTime(state.isStalled && airborne ? 0.16 : 0, t, 0.03);
 
+    // Sonic boom detection
+    if (state.mach >= 1.0 && this.previousMach < 1.0) {
+      this.playSonicBoom();
+    }
+    this.previousMach = state.mach;
+
     this.detectSystemChanges(state);
     this.checkGpwsCallouts(state);
+  }
+
+  public playSonicBoom() {
+    if (!this.ctx || this.isMuted) return;
+    const now = this.ctx.currentTime;
+    const osc = this.ctx.createOscillator();
+    const gain = this.ctx.createGain();
+    const filter = this.ctx.createBiquadFilter();
+    osc.type = 'triangle';
+    osc.frequency.setValueAtTime(140, now);
+    osc.frequency.exponentialRampToValueAtTime(22, now + 0.55);
+    filter.type = 'lowpass';
+    filter.frequency.value = 320;
+    gain.gain.setValueAtTime(0.35, now);
+    gain.gain.exponentialRampToValueAtTime(0.001, now + 0.65);
+    osc.connect(filter).connect(gain).connect(this.master);
+    osc.start(now);
+    osc.stop(now + 0.7);
+  }
+
+  public playFlareSound() {
+    if (!this.ctx || this.isMuted) return;
+    const now = this.ctx.currentTime;
+    const osc = this.ctx.createOscillator();
+    const gain = this.ctx.createGain();
+    const filter = this.ctx.createBiquadFilter();
+    osc.type = 'sawtooth';
+    osc.frequency.setValueAtTime(480, now);
+    osc.frequency.exponentialRampToValueAtTime(90, now + 0.35);
+    filter.type = 'bandpass';
+    filter.frequency.value = 650;
+    gain.gain.setValueAtTime(0.18, now);
+    gain.gain.exponentialRampToValueAtTime(0.001, now + 0.38);
+    osc.connect(filter).connect(gain).connect(this.master);
+    osc.start(now);
+    osc.stop(now + 0.4);
   }
 
   private detectSystemChanges(state: FlightState) {

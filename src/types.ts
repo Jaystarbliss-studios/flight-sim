@@ -72,6 +72,8 @@ export interface AircraftSpec {
   v2Knots: number;
   vRefKnots: number;
   description: string;
+  isFighter?: boolean;
+  hasAfterburner?: boolean;
 }
 
 export interface FlightPlan {
@@ -182,6 +184,72 @@ export interface FlightState {
   // Passenger & Rating stats
   passengerComfort: number; // 0 to 100%
   safetyViolations: string[];
+
+  // Military / Tactical Features (dimartarmizi/web-flight-simulator inspired)
+  isTacticalHud?: boolean;
+  afterburnerActive?: boolean;
+  flaresRemaining?: number;
+  lastFlareTime?: number;
+  targetDrone?: {
+    x: number;
+    y: number;
+    z: number;
+    distanceNm: number;
+    bearingDeg: number;
+    locked: boolean;
+  };
+
+  // Multi-Crew Shared Cockpit (Sequal32/yourcontrols inspired)
+  crewRole?: CrewRole;
+  controlTransferAnnouncement?: string;
+  isVirtualCopilotActive?: boolean;
+}
+
+export type CrewRole = 'PF' | 'PM';
+
+export interface SharedCockpitPacket {
+  type: 'sync' | 'transfer_request' | 'transfer_accept' | 'checklist_action' | 'copilot_callout';
+  senderRole: CrewRole;
+  senderId: string;
+  timestamp: number;
+  controls?: {
+    pitchInput: number;
+    rollInput: number;
+    yawInput: number;
+    throttle: number;
+    brakesActive: boolean;
+  };
+  systems?: {
+    gearDown: boolean;
+    flapsIndex: number;
+    spoilersDeployed: boolean;
+    reverseThrust: boolean;
+    autopilotEnabled: boolean;
+    autoThrottleEnabled: boolean;
+    targetAltitudeFt: number;
+    targetHeadingDeg: number;
+    targetSpeedKnots: number;
+    navMode: boolean;
+    appMode: boolean;
+    navLights: boolean;
+    beaconLights: boolean;
+    strobeLights: boolean;
+    landingLights: boolean;
+    taxiLights: boolean;
+    com1Freq?: string;
+    transponderCode?: string;
+  };
+  calloutText?: string;
+}
+
+export interface SharedCockpitSession {
+  role: CrewRole;
+  isHost: boolean;
+  isConnected: boolean;
+  peerCount: number;
+  virtualCopilot: boolean;
+  lastTransferTime: number;
+  transferMessage: string | null;
 }
 
 export interface FlightSummary {

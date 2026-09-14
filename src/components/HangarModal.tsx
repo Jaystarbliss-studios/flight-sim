@@ -43,10 +43,36 @@ export const HangarModal: React.FC<HangarModalProps> = ({ currentAircraft, curre
           <div><div className="flex items-center gap-2 text-cyan-300 text-xs font-mono font-bold uppercase tracking-[0.2em]"><Plane className="w-4 h-4" /> Hangar</div><h2 className="mt-1 text-xl sm:text-2xl font-black">Choose Your Aircraft</h2><p className="text-xs text-slate-400 mt-1">Choose the aircraft and visual model before dispatch. Your choice is remembered on this device.</p></div>
           <button onClick={onClose} className="rounded-full p-2 bg-slate-900 border border-slate-800 text-slate-400 hover:text-white" title="Close hangar"><X className="w-5 h-5" /></button>
         </div>
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4 p-5">
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 p-5">
           {AIRCRAFTS.map((aircraft) => { const active = aircraft.id === selectedId; return <button key={aircraft.id} onClick={() => setSelectedId(aircraft.id)} className={`group relative overflow-hidden rounded-2xl border text-left transition-all ${active ? 'border-cyan-400 bg-cyan-950/50 shadow-xl shadow-cyan-500/10' : 'border-slate-800 bg-slate-900/70 hover:border-slate-600'}`}>
-            <div className="h-36 relative overflow-hidden bg-gradient-to-br from-slate-900 via-slate-800 to-cyan-950/40"><div className="absolute inset-0 opacity-30 bg-[radial-gradient(circle_at_50%_30%,rgba(56,189,248,.35),transparent_55%)]" /><div className="absolute left-1/2 top-[44%] h-20 w-2/3 -translate-x-1/2 -translate-y-1/2 rounded-[50%] bg-slate-100/90 shadow-lg rotate-[-5deg]" /><div className="absolute left-1/2 top-[44%] w-[85%] h-1.5 -translate-x-1/2 bg-cyan-500/70 rotate-[-5deg]" />{active && <div className="absolute right-3 top-3 rounded-full bg-cyan-500 p-1.5"><Check className="w-4 h-4 text-white" /></div>}</div>
-            <div className="p-4"><div className="text-sm font-black">{aircraft.name}</div><div className="text-[10px] uppercase tracking-wider text-slate-500 mt-1">{aircraft.manufacturer} • {aircraft.type}</div><p className="text-xs text-slate-400 leading-relaxed mt-3 min-h-12">{aircraft.description}</p><div className="grid grid-cols-2 gap-2 mt-4 text-[10px] font-mono"><div className="rounded-lg bg-slate-950/70 p-2"><span className="text-slate-500 block">CRUISE</span><span className="text-cyan-300">{aircraft.cruiseSpeedKnots} kt</span></div><div className="rounded-lg bg-slate-950/70 p-2"><span className="text-slate-500 block">MTOW</span><span className="text-cyan-300">{Math.round(aircraft.maxTakeoffWeightKg / 1000)} t</span></div></div></div>
+            <div className="h-36 relative overflow-hidden bg-gradient-to-br from-slate-900 via-slate-800 to-cyan-950/40">
+              <div className="absolute inset-0 opacity-30 bg-[radial-gradient(circle_at_50%_30%,rgba(56,189,248,.35),transparent_55%)]" />
+              <div className="absolute left-1/2 top-[44%] h-20 w-2/3 -translate-x-1/2 -translate-y-1/2 rounded-[50%] bg-slate-100/90 shadow-lg rotate-[-5deg]" />
+              <div className="absolute left-1/2 top-[44%] w-[85%] h-1.5 -translate-x-1/2 bg-cyan-500/70 rotate-[-5deg]" />
+              {aircraft.isFighter && (
+                <div className="absolute left-3 top-3 rounded-full bg-orange-500/80 px-2 py-0.5 text-[9px] font-black tracking-wider uppercase text-white shadow-lg">
+                  Fighter Jet
+                </div>
+              )}
+              {active && <div className="absolute right-3 top-3 rounded-full bg-cyan-500 p-1.5"><Check className="w-4 h-4 text-white" /></div>}
+            </div>
+            <div className="p-4">
+              <div className="text-sm font-black flex items-center justify-between">
+                <span>{aircraft.name}</span>
+              </div>
+              <div className="text-[10px] uppercase tracking-wider text-slate-500 mt-1">{aircraft.manufacturer} • {aircraft.type}</div>
+              <p className="text-xs text-slate-400 leading-relaxed mt-3 min-h-12">{aircraft.description}</p>
+              <div className="grid grid-cols-2 gap-2 mt-4 text-[10px] font-mono">
+                <div className="rounded-lg bg-slate-950/70 p-2">
+                  <span className="text-slate-500 block">MAX SPEED</span>
+                  <span className="text-cyan-300">{aircraft.isFighter ? 'Mach 2.5+' : `${aircraft.cruiseSpeedKnots} kt`}</span>
+                </div>
+                <div className="rounded-lg bg-slate-950/70 p-2">
+                  <span className="text-slate-500 block">{aircraft.isFighter ? 'THRUST' : 'MTOW'}</span>
+                  <span className="text-cyan-300">{aircraft.isFighter ? 'Twin F100 AB' : `${Math.round(aircraft.maxTakeoffWeightKg / 1000)} t`}</span>
+                </div>
+              </div>
+            </div>
           </button>; })}
         </div>
         <div className="px-5 pb-5"><div className="rounded-2xl border border-slate-800 bg-slate-900/70 p-4"><div className="flex items-center justify-between gap-3 mb-3"><div><div className="text-xs font-mono font-bold uppercase tracking-wider text-slate-400">Aircraft Visual</div><div className="text-sm font-bold mt-1">How should {selectedAircraft.name} appear?</div></div><span className="text-[10px] font-mono text-slate-500">{detailedAvailable ? 'A320 detailed asset available' : 'Detailed asset not yet mapped'}</span></div><div className="grid grid-cols-1 sm:grid-cols-2 gap-3">

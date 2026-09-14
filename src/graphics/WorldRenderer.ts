@@ -28,6 +28,12 @@ export class WorldRenderer {
   private spoilerMeshes: THREE.Mesh[] = [];
   private elevator!: THREE.Mesh;
   private rudder!: THREE.Mesh;
+  private afterburnerMeshes: THREE.Mesh[] = [];
+  private afterburnerLights: THREE.PointLight[] = [];
+  private vaporConeMesh: THREE.Mesh | null = null;
+  private flarePoints: THREE.Points | null = null;
+  private activeFlares: { pos: THREE.Vector3; vel: THREE.Vector3; life: number }[] = [];
+  private lastFlareTriggerTime = 0;
   private sunLight!: THREE.DirectionalLight;
   private hemiLight!: THREE.HemisphereLight;
   private skyMesh!: THREE.Mesh;
@@ -72,7 +78,34 @@ export class WorldRenderer {
   }
 
   public setCameraMode(mode: CameraMode) { this.cameraMode = mode; this.cameraInitialized = false; }
-  public setPlan(plan: FlightPlan) { this.plan = plan; this.applyTimeAndWeather(plan.timeOfDay, plan.weather); }
+  public setPlan(plan: FlightPlan) {
+    const prevAircraftId = this.plan.aircraft.id;
+    this.plan = plan;
+    this.applyTimeAndWeather(plan.timeOfDay, plan.weather);
+    if (prevAircraftId !== plan.aircraft.id) {
+      this.rebuildAircraft();
+    }
+  }
+
+  public rebuildAircraft() {
+    while (this.fallbackAircraft.children.length > 0) {
+      const child = this.fallbackAircraft.children[0];
+      this.fallbackAircraft.remove(child);
+    }
+    this.fanMeshes = [];
+    this.flapMeshes = [];
+    this.spoilerMeshes = [];
+    this.afterburnerMeshes = [];
+    this.afterburnerLights = [];
+    this.vaporConeMesh = null;
+    this.buildAircraft();
+    if (this.plan.aircraft.id !== 'f15') {
+      this.loadExternalAircraft();
+    } else if (this.externalAircraftGroup) {
+      this.aircraftGroup.remove(this.externalAircraftGroup);
+      this.externalAircraftGroup = null;
+    }
+  }
   public rotateCamera(deltaYaw: number, deltaPitch: number) {
     if (this.cameraMode === 'cockpit') return;
     this.cameraOrbitYaw += deltaYaw;
@@ -109,6 +142,14 @@ export class WorldRenderer {
   }
 
   private buildAircraft() {
+    if (this.plan.aircraft.isFighter || this.plan.aircraft.id === 'f15') {
+      this.buildFighterAircraft();
+    } else {
+      this.buildCivilianAircraft();
+    }
+  }
+
+  private buildCivilianAircraft() {
     const spec = this.plan.aircraft;
     const body = new THREE.MeshStandardMaterial({ color: 0xf2f4f6, metalness: 0.35, roughness: 0.32 });
     const dark = new THREE.MeshStandardMaterial({ color: 0x20242a, metalness: 0.72, roughness: 0.24 });
@@ -166,6 +207,191 @@ export class WorldRenderer {
     const beacon = new THREE.PointLight(0xff2200, 4, 28); beacon.position.set(0, 2.3, 0); this.fallbackAircraft.add(beacon);
     const navL = new THREE.PointLight(0xff1717, 2.5, 18); navL.position.set(spec.wingSpanM * 0.5, 0, -2);
     const navR = new THREE.PointLight(0x22ff66, 2.5, 18); navR.position.set(-spec.wingSpanM * 0.5, 0, -2); this.fallbackAircraft.add(navL, navR);
+  }
+
+  private buildFighterAircraft() {
+    const spec = this.plan.aircraft;
+    const camo = new THREE.MeshStandardMaterial({ color: 0x3d444d, roughness: 0.44, metalness: 0.62 });
+    const dark = new THREE.MeshStandardMaterial({ color: 0x1d2024, roughness: 0.36, metalness: 0.8 });
+    const glass = new THREE.MeshPhysicalMaterial({ color: 0xd4a017, metalness: 0.35, roughness: 0.05, transmission: 0.78, transparent: true, opacity: 0.88 });
+    const nozzleMat = new THREE.MeshStandardMaterial({ color: 0x15171a, roughness: 0.28, metalness: 0.95 });
+
+    // Central blended fuselage
+    const fuselage = new THREE.Mesh(new THREE.BoxGeometry(3.6, 1.5, Math.max(12, spec.lengthM - 6)), camo);
+    fuselage.castShadow = true;
+    this.fallbackAircraft.add(fuselage);
+
+    // Chined radome nose
+    const nose = new THREE.Mesh(new THREE.ConeGeometry(1.25, 5.2, 20), dark);
+    nose.rotation.x = Math.PI / 2;
+    nose.position.z = spec.lengthM * 0.43;
+    nose.castShadow = true;
+    this.fallbackAircraft.add(nose);
+
+    // Pitot boom
+    const pitot = new THREE.Mesh(new THREE.CylinderGeometry(0.025, 0.025, 1.8, 8), dark);
+    pitot.rotation.x = Math.PI / 2;
+    pitot.position.z = spec.lengthM * 0.43 + 3.2;
+    this.fallbackAircraft.add(pitot);
+
+    // Bubble canopy
+    const canopy = new THREE.Mesh(new THREE.SphereGeometry(1, 20, 12), glass);
+    canopy.scale.set(0.85, 0.65, 2.5);
+    canopy.position.set(0, 1.15, spec.lengthM * 0.2);
+    this.fallbackAircraft.add(canopy);
+
+    // Swept cropped-delta wings
+    const wing = new THREE.Mesh(new THREE.BoxGeometry(spec.wingSpanM, 0.22, 5.6), camo);
+    wing.position.set(0, 0.1, -1.2);
+    wing.rotation.y = -0.04;
+    wing.castShadow = true;
+    this.fallbackAircraft.add(wing);
+
+    // Wingtip missile rails and AIM-9 Sidewinder missiles
+    for (const side of [-1, 1]) {
+      const rail = new THREE.Mesh(new THREE.BoxGeometry(0.14, 0.12, 2.4), dark);
+      rail.position.set(side * (spec.wingSpanM * 0.5), 0.1, -1.2);
+      this.fallbackAircraft.add(rail);
+
+      const missile = new THREE.Mesh(new THREE.CylinderGeometry(0.07, 0.07, 2.6, 12), new THREE.MeshStandardMaterial({ color: 0xe5e7eb, metalness: 0.5, roughness: 0.3 }));
+      missile.rotation.x = Math.PI / 2;
+      missile.position.set(side * (spec.wingSpanM * 0.5), 0.02, -1.2);
+      this.fallbackAircraft.add(missile);
+
+      const missileTip = new THREE.Mesh(new THREE.ConeGeometry(0.07, 0.3, 12), new THREE.MeshStandardMaterial({ color: 0xef4444 }));
+      missileTip.rotation.x = Math.PI / 2;
+      missileTip.position.set(side * (spec.wingSpanM * 0.5), 0.02, -1.2 + 1.45);
+      this.fallbackAircraft.add(missileTip);
+    }
+
+    // Twin vertical stabilizers (outward canted rudders)
+    for (const side of [-1, 1]) {
+      const fin = new THREE.Mesh(new THREE.BoxGeometry(0.22, 3.8, 3.2), camo);
+      fin.position.set(side * 1.5, 2.1, -spec.lengthM * 0.36);
+      fin.rotation.z = side * -0.06;
+      fin.castShadow = true;
+      this.fallbackAircraft.add(fin);
+    }
+
+    this.rudder = new THREE.Mesh(new THREE.BoxGeometry(0.2, 3.2, 0.8), dark);
+    this.rudder.position.set(0, 2.0, -spec.lengthM * 0.44);
+    this.fallbackAircraft.add(this.rudder);
+
+    // Horizontal stabilators (elevators)
+    this.elevator = new THREE.Mesh(new THREE.BoxGeometry(spec.wingSpanM * 0.44, 0.16, 2.4), dark);
+    this.elevator.position.set(0, 0.05, -spec.lengthM * 0.44);
+    this.fallbackAircraft.add(this.elevator);
+
+    // Twin afterburning turbofan nozzles
+    for (const side of [-1, 1]) {
+      const nozzle = new THREE.Mesh(new THREE.CylinderGeometry(0.72, 0.68, 2.2, 20), nozzleMat);
+      nozzle.rotation.x = Math.PI / 2;
+      nozzle.position.set(side * 0.95, 0.05, -spec.lengthM * 0.44);
+      nozzle.castShadow = true;
+      this.fallbackAircraft.add(nozzle);
+
+      // Outer orange flame cone
+      const burnerOuter = new THREE.Mesh(
+        new THREE.ConeGeometry(0.65, 4.8, 16),
+        new THREE.MeshBasicMaterial({ color: 0xff6600, transparent: true, opacity: 0.0, depthWrite: false })
+      );
+      burnerOuter.rotation.x = -Math.PI / 2;
+      burnerOuter.position.set(side * 0.95, 0.05, -spec.lengthM * 0.44 - 3.2);
+      this.fallbackAircraft.add(burnerOuter);
+      this.afterburnerMeshes.push(burnerOuter);
+
+      // Inner cyan flame core
+      const burnerInner = new THREE.Mesh(
+        new THREE.ConeGeometry(0.35, 3.2, 14),
+        new THREE.MeshBasicMaterial({ color: 0x55ddff, transparent: true, opacity: 0.0, depthWrite: false })
+      );
+      burnerInner.rotation.x = -Math.PI / 2;
+      burnerInner.position.set(side * 0.95, 0.05, -spec.lengthM * 0.44 - 2.5);
+      this.fallbackAircraft.add(burnerInner);
+      this.afterburnerMeshes.push(burnerInner);
+
+      const burnerLight = new THREE.PointLight(0xff7722, 0, 22);
+      burnerLight.position.set(side * 0.95, 0.05, -spec.lengthM * 0.44 - 1.5);
+      this.fallbackAircraft.add(burnerLight);
+      this.afterburnerLights.push(burnerLight);
+    }
+
+    // Supersonic transonic vapor cone
+    const coneGeo = new THREE.CylinderGeometry(1.6, 4.4, 3.2, 24, 1, true);
+    const coneMat = new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.0, side: THREE.DoubleSide, depthWrite: false });
+    this.vaporConeMesh = new THREE.Mesh(coneGeo, coneMat);
+    this.vaporConeMesh.rotation.x = Math.PI / 2;
+    this.vaporConeMesh.position.set(0, 0.2, 1.2);
+    this.fallbackAircraft.add(this.vaporConeMesh);
+
+    // Fighter Landing Gear
+    this.gearGroup = new THREE.Group();
+    const tire = new THREE.MeshStandardMaterial({ color: 0x101010, roughness: 0.92 });
+    const strut = new THREE.MeshStandardMaterial({ color: 0x8d9398, metalness: 0.9, roughness: 0.18 });
+    const makeWheel = (radius: number, x: number, y: number, z: number) => {
+      const wheel = new THREE.Mesh(new THREE.CylinderGeometry(radius, radius, 0.28, 16), tire);
+      wheel.rotation.z = Math.PI / 2;
+      wheel.position.set(x, y, z);
+      this.gearGroup.add(wheel);
+    };
+    const noseStrut = new THREE.Mesh(new THREE.CylinderGeometry(0.1, 0.1, 2.0, 10), strut);
+    noseStrut.position.set(0, -1.2, spec.lengthM * 0.26);
+    this.gearGroup.add(noseStrut);
+    makeWheel(0.38, 0, -2.1, spec.lengthM * 0.26);
+    for (const x of [-1.8, 1.8]) {
+      const mainStrut = new THREE.Mesh(new THREE.CylinderGeometry(0.14, 0.14, 2.3, 10), strut);
+      mainStrut.position.set(x, -1.3, -1.2);
+      this.gearGroup.add(mainStrut);
+      makeWheel(0.48, x, -2.3, -1.2);
+    }
+    this.fallbackAircraft.add(this.gearGroup);
+
+    // Fighter Flaps & Spoilers
+    for (const side of [-1, 1]) {
+      const flap = new THREE.Mesh(new THREE.BoxGeometry(spec.wingSpanM * 0.24, 0.12, 1.2), dark);
+      flap.position.set(side * (spec.wingSpanM * 0.24), -0.1, -1.6);
+      this.flapMeshes.push(flap);
+      this.fallbackAircraft.add(flap);
+      const spoiler = new THREE.Mesh(new THREE.BoxGeometry(spec.wingSpanM * 0.16, 0.08, 0.9), dark);
+      spoiler.position.set(side * (spec.wingSpanM * 0.2), 0.14, -0.9);
+      this.spoilerMeshes.push(spoiler);
+      this.fallbackAircraft.add(spoiler);
+    }
+
+    const navL = new THREE.PointLight(0xff1717, 2.5, 18); navL.position.set(spec.wingSpanM * 0.5, 0.1, -1.2);
+    const navR = new THREE.PointLight(0x22ff66, 2.5, 18); navR.position.set(-spec.wingSpanM * 0.5, 0.1, -1.2);
+    const beacon = new THREE.PointLight(0xff2200, 3, 24); beacon.position.set(0, 1.9, -1.0);
+    this.fallbackAircraft.add(navL, navR, beacon);
+
+    this.initFlareParticleSystem();
+  }
+
+  private initFlareParticleSystem() {
+    if (this.flarePoints) return;
+    const count = 120;
+    const geo = new THREE.BufferGeometry();
+    const positions = new Float32Array(count * 3);
+    const colors = new Float32Array(count * 3);
+    for (let i = 0; i < count; i++) {
+      positions[i * 3] = 0;
+      positions[i * 3 + 1] = -9999;
+      positions[i * 3 + 2] = 0;
+      colors[i * 3] = 1.0;
+      colors[i * 3 + 1] = 0.8;
+      colors[i * 3 + 2] = 0.3;
+    }
+    geo.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+    geo.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+    const mat = new THREE.PointsMaterial({
+      size: 3.5,
+      vertexColors: true,
+      transparent: true,
+      opacity: 0.92,
+      blending: THREE.AdditiveBlending,
+      depthWrite: false,
+    });
+    this.flarePoints = new THREE.Points(geo, mat);
+    this.scene.add(this.flarePoints);
   }
 
   private loadExternalAircraft() {
@@ -275,6 +501,72 @@ export class WorldRenderer {
     const flap = THREE.MathUtils.degToRad(state.flapsAngle || 0); this.flapMeshes.forEach((mesh) => { mesh.rotation.x = flap * 0.72; });
     this.spoilerMeshes.forEach((mesh) => { mesh.rotation.x = -(state.spoilersPosition || 0) * 0.9; });
     this.elevator.rotation.x = state.pitchInput * 0.35; this.rudder.rotation.y = state.yawInput * 0.35;
+
+    // Afterburner animation (dimartarmizi/web-flight-simulator inspired)
+    if (this.afterburnerMeshes.length > 0) {
+      const isAb = Boolean(state.afterburnerActive);
+      const thr = state.throttle;
+      for (const mesh of this.afterburnerMeshes) {
+        const mat = mesh.material as THREE.MeshBasicMaterial;
+        if (isAb) {
+          mat.opacity = 0.85 + Math.random() * 0.15;
+          mesh.scale.set(1.0 + Math.random() * 0.1, 1.0 + Math.random() * 0.1, 1.0 + Math.random() * 0.3);
+        } else if (thr > 0.65) {
+          mat.opacity = 0.15;
+          mesh.scale.set(0.6, 0.6, 0.45);
+        } else {
+          mat.opacity = 0.0;
+        }
+      }
+      for (const light of this.afterburnerLights) {
+        light.intensity = isAb ? (3.8 + Math.random() * 1.4) : (thr > 0.65 ? 0.6 : 0);
+      }
+    }
+
+    // Transonic vapor cone shockwave (supersonic transition)
+    if (this.vaporConeMesh) {
+      const isTransonic = state.mach >= 0.97 && state.mach <= 1.07;
+      const mat = this.vaporConeMesh.material as THREE.MeshBasicMaterial;
+      const targetOp = isTransonic ? 0.42 + Math.sin(this.elapsed * 24) * 0.08 : 0;
+      mat.opacity += (targetOp - mat.opacity) * Math.min(1, deltaSec * 8);
+    }
+
+    // Flare countermeasures particle dynamics
+    if (state.lastFlareTime && state.lastFlareTime > this.lastFlareTriggerTime) {
+      this.lastFlareTriggerTime = state.lastFlareTime;
+      const flareOrigin = new THREE.Vector3(state.x, state.y, state.z);
+      const fwd = new THREE.Vector3(Math.sin(state.yaw), 0, Math.cos(state.yaw)).normalize();
+      for (let i = 0; i < 18; i++) {
+        const spread = new THREE.Vector3((Math.random() - 0.5) * 8, (Math.random() - 0.5) * 4, (Math.random() - 0.5) * 8);
+        const ejectVel = fwd.clone().multiplyScalar(-35 - Math.random() * 20).add(spread);
+        this.activeFlares.push({
+          pos: flareOrigin.clone().add(new THREE.Vector3((Math.random() - 0.5) * 3, -1, (Math.random() - 0.5) * 3)),
+          vel: ejectVel,
+          life: 1.6 + Math.random() * 0.6,
+        });
+      }
+    }
+
+    if (this.flarePoints && this.activeFlares.length > 0) {
+      const posAttr = this.flarePoints.geometry.getAttribute('position') as THREE.BufferAttribute;
+      const arr = posAttr.array as Float32Array;
+      for (let i = 0; i < this.activeFlares.length; i++) {
+        const f = this.activeFlares[i];
+        f.pos.addScaledVector(f.vel, deltaSec);
+        f.vel.y -= 9.8 * deltaSec * 0.4;
+        f.vel.multiplyScalar(0.96);
+        f.life -= deltaSec;
+        arr[i * 3] = f.pos.x;
+        arr[i * 3 + 1] = f.pos.y;
+        arr[i * 3 + 2] = f.pos.z;
+      }
+      for (let i = this.activeFlares.length; i < 120; i++) {
+        arr[i * 3 + 1] = -9999;
+      }
+      this.activeFlares = this.activeFlares.filter(f => f.life > 0);
+      posAttr.needsUpdate = true;
+    }
+
     if (this.rainParticles.visible) { this.rainParticles.position.set(state.x, state.y, state.z); const attr = this.rainParticles.geometry.getAttribute('position') as THREE.BufferAttribute; const arr = attr.array as Float32Array; for (let i = 1; i < arr.length; i += 3) { arr[i] -= deltaSec * 260; if (arr[i] < -20) arr[i] += 900; } attr.needsUpdate = true; }
     this.updateCamera(state, deltaSec);
     this.renderer.render(this.scene, this.camera);

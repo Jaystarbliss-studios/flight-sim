@@ -1,4 +1,4 @@
-import React, { useMemo } from 'react';
+import React from 'react';
 import { FlightState } from '../types';
 
 type Props = { state: FlightState };
@@ -8,7 +8,7 @@ export function FlightVisualOverlay({ state }: Props) {
   const pitch = state.pitch;
   const speed = state.airspeedKnots;
   const altitude = state.altitudeFt;
-  const intensity = useMemo(() => Math.min(1, Math.max(0, (speed - 80) / 180)), [speed]);
+  const intensity = Math.min(1, Math.max(0, (speed - 80) / 180));
 
   const horizonTransform = `translate(-50%, -50%) rotate(${bank * 57.2958}deg) translateY(${pitch * 170}px)`;
   const speedBlur = `${Math.round(intensity * 7)}px`;
