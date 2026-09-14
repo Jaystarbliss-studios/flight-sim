@@ -14,20 +14,24 @@ import { FlightSetupModal } from './components/FlightSetupModal';
 import { SettingsModal } from './components/SettingsModal';
 import { DevMetricsPanel } from './components/DevMetricsPanel';
 import { QuickTutorial } from './components/QuickTutorial';
+import { SimulationClock } from './core/SimulationClock';
+import { KeyboardFlightControls } from './controls/KeyboardFlightControls';
 
 export default function App() {
   const canvasContainerRef = useRef<HTMLDivElement | null>(null);
   const rendererRef = useRef<WorldRenderer | null>(null);
   const physicsRef = useRef<FlightPhysics | null>(null);
   const atcRef = useRef<AtcSystem>(new AtcSystem());
+  const simulationClockRef = useRef(new SimulationClock({ stepSeconds: 1 / 60, maxFrameSeconds: 0.1, maxStepsPerFrame: 8 }));
+  const timeCompressionRef = useRef(1);
 
-  // Default Flight Plan: Los Angeles (KLAX) to San Francisco (KSFO) on AeroSky A320neo
-  // Default to Beginner assistance for smooth, forgiving stability
+  // Default Flight Plan: one-airport training circuit around Los Angeles.
+  // The destination remains configurable, but the first vertical slice starts with one airport.
   const [flightPlan, setFlightPlan] = useState<FlightPlan>(() => ({
     aircraft: AIRCRAFTS[0],
     origin: AIRPORTS[0],
-    destination: AIRPORTS[1],
-    cruisingAltitudeFt: 30000,
+    destination: AIRPORTS[0],
+    cruisingAltitudeFt: 5000,
     passengers: 142,
     maxPassengers: 180,
     cargoKg: 3800,
@@ -39,53 +43,50 @@ export default function App() {
     assistance: 'beginner',
   }));
 
-  // Flight state ref for the 60fps render loop
   const stateRef = useRef<FlightState | null>(null);
   const [uiState, setUiState] = useState<FlightState | null>(null);
   const [cameraMode, setCameraMode] = useState<CameraMode>('chase');
 
-  // Modals & Overlays
   const [showTutorial, setShowTutorial] = useState(true);
   const [showCockpitInstruments, setShowCockpitInstruments] = useState(false);
   const [showSetupModal, setShowSetupModal] = useState(false);
   const [showSettingsModal, setShowSettingsModal] = useState(false);
   const [flightSummary, setFlightSummary] = useState<FlightSummary | null>(null);
 
-  // Sound & Sim Controls
   const [isMuted, setIsMuted] = useState(false);
   const [timeCompression, setTimeCompression] = useState(1);
   const [showDevMetrics, setShowDevMetrics] = useState(false);
   const [currentAtcMessage, setCurrentAtcMessage] = useState<AtcMessage | null>(null);
 
-  // Performance Telemetry
   const [fps, setFps] = useState(60);
   const [frameTimeMs, setFrameTimeMs] = useState(16.6);
 
-  // Mouse camera drag
   const isMouseDownRef = useRef(false);
   const lastMousePosRef = useRef({ x: 0, y: 0 });
 
-  // Initialize Simulator
   const initSimulation = useCallback((plan: FlightPlan) => {
     const physics = new FlightPhysics(plan);
     physicsRef.current = physics;
     const initialRunwayAlt = plan.origin.runways[0]?.altitudeMeters || 38;
     const initialState = physics.initFlightState(initialRunwayAlt);
     stateRef.current = initialState;
+    simulationClockRef.current.reset();
+    timeCompressionRef.current = 1;
+    setTimeCompression(1);
     setUiState({ ...initialState });
     atcRef.current.reset();
     setFlightSummary(null);
 
-    // Initial Clearance
     const initialAtc = atcRef.current.getTransmissionForPhase('takeoff_roll', plan);
     setCurrentAtcMessage(initialAtc);
 
-    if (rendererRef.current) {
-      rendererRef.current.setPlan(plan);
-    }
+    if (rendererRef.current) rendererRef.current.setPlan(plan);
   }, []);
 
-  // Initialize 3D Engine
+  useEffect(() => {
+    timeCompressionRef.current = timeCompression;
+  }, [timeCompression]);
+
   useEffect(() => {
     const container = canvasContainerRef.current;
     if (!container) return;
@@ -94,7 +95,6 @@ export default function App() {
     rendererRef.current = renderer;
     initSimulation(flightPlan);
 
-    // Mouse drag for camera orbit / cockpit view
     const handlePointerDown = (e: PointerEvent) => {
       if ((e.target as HTMLElement).tagName === 'CANVAS') {
         isMouseDownRef.current = true;
@@ -108,7 +108,6 @@ export default function App() {
       const dx = e.clientX - lastMousePosRef.current.x;
       const dy = e.clientY - lastMousePosRef.current.y;
       lastMousePosRef.current = { x: e.clientX, y: e.clientY };
-
       rendererRef.current.rotateCamera(dx * 0.006, dy * 0.006);
     };
 
@@ -117,9 +116,7 @@ export default function App() {
     };
 
     const handleWheel = (e: WheelEvent) => {
-      if (rendererRef.current) {
-        rendererRef.current.zoomCamera(e.deltaY * 0.04);
-      }
+      if (rendererRef.current) rendererRef.current.zoomCamera(e.deltaY * 0.04);
     };
 
     window.addEventListener('pointerdown', handlePointerDown);
@@ -127,7 +124,11 @@ export default function App() {
     window.addEventListener('pointerup', handlePointerUp);
     window.addEventListener('wheel', handleWheel, { passive: true });
 
-    // Main Simulation and Animation Loop
+    const keyboard = stateRef.current
+      ? new KeyboardFlightControls(stateRef.current, (mode) => handleCameraChange(mode))
+      : null;
+    keyboard?.attach();
+
     let lastTime = performance.now();
     let frameCount = 0;
     let fpsTimer = performance.now();
@@ -135,7 +136,6 @@ export default function App() {
 
     const tick = (now: number) => {
       animId = requestAnimationFrame(tick);
-
       const deltaMs = now - lastTime;
       lastTime = now;
       const deltaSec = Math.min(deltaMs / 1000, 0.1);
@@ -151,54 +151,50 @@ export default function App() {
       if (!stateRef.current || !physicsRef.current || !rendererRef.current) return;
 
       const state = stateRef.current;
-      state.timeCompression = timeCompression;
+      state.timeCompression = timeCompressionRef.current;
+      const simDelta = deltaSec * timeCompressionRef.current;
 
-      // Ground elevation
-      const groundElevationM = flightPlan.origin.runways[0]?.altitudeMeters || 38;
-      const destX = flightPlan.destination.worldX;
-      const destZ = flightPlan.destination.worldZ;
+      simulationClockRef.current.advance(simDelta, (fixedDt) => {
+        if (!stateRef.current || !physicsRef.current) return;
+        physicsRef.current.update(
+          stateRef.current,
+          fixedDt,
+          flightPlan.origin.runways[0]?.altitudeMeters || 38,
+          flightPlan.destination.worldX,
+          flightPlan.destination.worldZ,
+        );
+      });
 
-      // Step Physics
-      physicsRef.current.update(state, deltaSec, groundElevationM, destX, destZ);
-
-      // Update Audio Engine
       globalAudio.update(state);
-
-      // Update 3D Graphics
       rendererRef.current.update(state, deltaSec);
 
-      // Check ATC message for phase change
       const newAtc = atcRef.current.getTransmissionForPhase(state.phase, flightPlan);
       if (newAtc) {
         setCurrentAtcMessage(newAtc);
         globalAudio.playChime();
       }
 
-      // Check for Flight Completion or Crash Result Modal
       if ((state.phase === 'gate_arrival' || state.phase === 'crashed') && !flightSummary) {
         const summary = physicsRef.current.getFlightSummary(state);
         setFlightSummary(summary);
       }
 
-      // Sync state to UI (throttled)
-      if (frameCount % 3 === 0) {
-        setUiState({ ...state });
-      }
+      if (frameCount % 3 === 0) setUiState({ ...state });
     };
 
     animId = requestAnimationFrame(tick);
 
     return () => {
       cancelAnimationFrame(animId);
+      keyboard?.detach();
       window.removeEventListener('pointerdown', handlePointerDown);
       window.removeEventListener('pointermove', handlePointerMove);
       window.removeEventListener('pointerup', handlePointerUp);
       window.removeEventListener('wheel', handleWheel);
       renderer.destroy();
     };
-  }, [initSimulation, timeCompression]);
+  }, [initSimulation]);
 
-  // Handle Flight Control Events
   const handlePitchRoll = (pitch: number, roll: number) => {
     if (!stateRef.current) return;
     stateRef.current.pitchInput = pitch;
@@ -270,9 +266,7 @@ export default function App() {
 
   const handleCameraChange = (mode: CameraMode) => {
     setCameraMode(mode);
-    if (rendererRef.current) {
-      rendererRef.current.setCameraMode(mode);
-    }
+    if (rendererRef.current) rendererRef.current.setCameraMode(mode);
   };
 
   const handleToggleMute = () => {
@@ -286,46 +280,26 @@ export default function App() {
     initSimulation(newPlan);
   };
 
-  const handleRestartFlight = () => {
-    initSimulation(flightPlan);
-  };
+  const handleRestartFlight = () => initSimulation(flightPlan);
 
   return (
     <div className="relative w-screen h-screen overflow-hidden bg-black select-none font-sans">
-      {/* 3D WebGL Viewport (Clear, unblocked view of the aircraft and sky) */}
       <div ref={canvasContainerRef} className="absolute inset-0 w-full h-full cursor-grab active:cursor-grabbing" />
 
-      {/* Developer Sim Metrics Panel (Only when toggled ON in settings) */}
       {showDevMetrics && uiState && (
-        <DevMetricsPanel
-          fps={fps}
-          frameTimeMs={frameTimeMs}
-          state={uiState}
-          cameraMode={cameraMode}
-        />
+        <DevMetricsPanel fps={fps} frameTimeMs={frameTimeMs} state={uiState} cameraMode={cameraMode} />
       )}
 
-      {/* Top Floating Sleek Flight Phase Status Pill */}
       {uiState && (
         <div className="absolute top-12 sm:top-14 inset-x-0 pointer-events-none flex flex-col items-center gap-1 z-20">
-          <FlightPhaseBar
-            state={uiState}
-            plan={flightPlan}
-            atcMessage={currentAtcMessage}
-          />
+          <FlightPhaseBar state={uiState} plan={flightPlan} atcMessage={currentAtcMessage} />
         </div>
       )}
 
-      {/* Interactive Quick Step-by-Step Pilot Tutorial */}
       {showTutorial && uiState && (
-        <QuickTutorial
-          state={uiState}
-          onDismiss={() => setShowTutorial(false)}
-          onFullThrottle={handleFullThrottle}
-        />
+        <QuickTutorial state={uiState} onDismiss={() => setShowTutorial(false)} onFullThrottle={handleFullThrottle} />
       )}
 
-      {/* Optional Cockpit Glass Display Panel (Only visible if user opens Avionics) */}
       {uiState && showCockpitInstruments && (
         <div className="absolute top-24 left-4 pointer-events-auto z-30 animate-in fade-in zoom-in-95">
           <div className="relative">
@@ -341,7 +315,6 @@ export default function App() {
         </div>
       )}
 
-      {/* Minimalist Modern Flight Controls Overlay */}
       {uiState && (
         <FlightControlsOverlay
           state={uiState}
@@ -370,7 +343,6 @@ export default function App() {
         />
       )}
 
-      {/* Flight Setup & Dispatch Modal */}
       {showSetupModal && (
         <FlightSetupModal
           currentPlan={flightPlan}
@@ -379,7 +351,6 @@ export default function App() {
         />
       )}
 
-      {/* Simulator Settings & Keybindings Modal */}
       {showSettingsModal && (
         <SettingsModal
           assistance={flightPlan.assistance}
@@ -390,13 +361,8 @@ export default function App() {
         />
       )}
 
-      {/* Flight Results / Incident Modal */}
       {flightSummary && (
-        <FlightResultModal
-          summary={flightSummary}
-          onRestart={handleRestartFlight}
-          onClose={() => setFlightSummary(null)}
-        />
+        <FlightResultModal summary={flightSummary} onRestart={handleRestartFlight} onClose={() => setFlightSummary(null)} />
       )}
     </div>
   );
