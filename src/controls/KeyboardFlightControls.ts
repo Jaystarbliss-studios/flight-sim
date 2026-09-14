@@ -6,8 +6,8 @@ type CameraMode = 'cockpit' | 'chase' | 'wing' | 'gear' | 'free';
  * Single authoritative desktop input layer.
  *
  * Inspired by YourControls' event/state separation: keys only express pilot
- * intent here; FlightPhysics owns the aircraft response. The renderer/UI must
- * not register a second keyboard flight controller.
+ * intent here; FlightPhysics owns the aircraft response. The listener runs in
+ * capture phase so legacy UI keyboard handlers cannot fight the simulator.
  */
 export class KeyboardFlightControls {
   private readonly getState: () => FlightState | null;
@@ -23,16 +23,16 @@ export class KeyboardFlightControls {
   public attach() {
     if (this.attached) return;
     this.attached = true;
-    window.addEventListener('keydown', this.handleKeyDown);
-    window.addEventListener('keyup', this.handleKeyUp);
+    window.addEventListener('keydown', this.handleKeyDown, true);
+    window.addEventListener('keyup', this.handleKeyUp, true);
     window.addEventListener('blur', this.handleBlur);
   }
 
   public detach() {
     if (!this.attached) return;
     this.attached = false;
-    window.removeEventListener('keydown', this.handleKeyDown);
-    window.removeEventListener('keyup', this.handleKeyUp);
+    window.removeEventListener('keydown', this.handleKeyDown, true);
+    window.removeEventListener('keyup', this.handleKeyUp, true);
     window.removeEventListener('blur', this.handleBlur);
     this.handleBlur();
   }
@@ -40,7 +40,7 @@ export class KeyboardFlightControls {
   private isFlightKey(key: string) {
     return [
       'w', 's', 'a', 'd', 'q', 'e', 'b', 'g', 'f', 'v', 'x', 'r', 'p',
-      'l', 'n', 'k', 't', 'z', 'shift', 'control', '1', '2', '3', '4', '5',
+      'l', 'n', 'k', 't', 'z', 'o', 'shift', 'control', '1', '2', '3', '4', '5',
       'escape', ' ', '+', '=', '-', '_', 'c', 'home', 'end', 'pageup', 'pagedown',
     ].includes(key) || ['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(key);
   }
@@ -50,9 +50,11 @@ export class KeyboardFlightControls {
     if (target?.matches('input, textarea, select, [contenteditable="true"]')) return;
 
     const key = event.key.length === 1 ? event.key.toLowerCase() : event.key;
-    if (this.isFlightKey(key)) event.preventDefault();
-    if (event.repeat && !['+', '=', '-', '_'].includes(key)) return;
+    if (!this.isFlightKey(key)) return;
+    event.preventDefault();
+    event.stopImmediatePropagation();
 
+    if (event.repeat && !['+', '=', '-', '_'].includes(key)) return;
     const state = this.getState();
     if (!state) return;
     this.pressed.add(key);
@@ -74,18 +76,10 @@ export class KeyboardFlightControls {
         state.autopilotEnabled = !state.autopilotEnabled;
         state.autoThrottleEnabled = state.autopilotEnabled;
         break;
-      case 'shift':
-        state.throttle = Math.min(1, state.throttle + 0.05);
-        break;
-      case 'control':
-        state.throttle = Math.max(0, state.throttle - 0.05);
-        break;
-      case '+': case '=':
-        state.throttle = Math.min(1, state.throttle + 0.02);
-        break;
-      case '-': case '_':
-        state.throttle = Math.max(0, state.throttle - 0.02);
-        break;
+      case 'shift': state.throttle = Math.min(1, state.throttle + 0.05); break;
+      case 'control': state.throttle = Math.max(0, state.throttle - 0.05); break;
+      case '+': case '=': state.throttle = Math.min(1, state.throttle + 0.02); break;
+      case '-': case '_': state.throttle = Math.max(0, state.throttle - 0.02); break;
       case '1': this.onCamera('cockpit'); break;
       case '2': this.onCamera('chase'); break;
       case '3': this.onCamera('wing'); break;
@@ -109,11 +103,13 @@ export class KeyboardFlightControls {
   };
 
   private handleKeyUp = (event: KeyboardEvent) => {
-    const state = this.getState();
     const key = event.key.length === 1 ? event.key.toLowerCase() : event.key;
+    if (!this.isFlightKey(key)) return;
+    event.preventDefault();
+    event.stopImmediatePropagation();
+    const state = this.getState();
     this.pressed.delete(key);
     if (!state) return;
-
     if (key === 'b') state.brakesActive = false;
     this.applyAxes(state);
   };
