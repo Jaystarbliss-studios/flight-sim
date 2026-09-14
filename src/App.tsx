@@ -5,6 +5,7 @@ import { AIRCRAFTS } from './data/aircraft';
 import { FlightPhysics } from './simulation/flightPhysics';
 import { globalAudio } from './simulation/audioEngine';
 import { AtcSystem, AtcMessage } from './simulation/atcSystem';
+import { CompleteSimulationSystems } from './simulation/completeSystems';
 import { WorldRenderer } from './graphics/WorldRenderer';
 import { CockpitDisplay } from './components/CockpitDisplay';
 import { FlightControlsOverlay } from './components/FlightControlsOverlay';
@@ -16,9 +17,10 @@ import { SettingsModal } from './components/SettingsModal';
 import { DevMetricsPanel } from './components/DevMetricsPanel';
 import { QuickTutorial } from './components/QuickTutorial';
 import { FlightVisualOverlay } from './components/FlightVisualOverlay';
+import { SimulationSystemsPanel } from './components/SimulationSystemsPanel';
 import { SimulationClock } from './core/SimulationClock';
 import { KeyboardFlightControls } from './controls/KeyboardFlightControls';
-import { Plane } from 'lucide-react';
+import { Plane, Radar } from 'lucide-react';
 
 const aircraftCapacity = (id: string) => id === 'b777' ? 396 : id === 'e195' ? 146 : 180;
 
@@ -36,6 +38,7 @@ export default function App() {
   const canvasContainerRef = useRef<HTMLDivElement | null>(null);
   const rendererRef = useRef<WorldRenderer | null>(null);
   const physicsRef = useRef<FlightPhysics | null>(null);
+  const systemsRef = useRef<CompleteSimulationSystems | null>(null);
   const atcRef = useRef<AtcSystem>(new AtcSystem());
   const simulationClockRef = useRef(new SimulationClock({ stepSeconds: 1 / 60, maxFrameSeconds: 0.1, maxStepsPerFrame: 8 }));
   const timeCompressionRef = useRef(1);
@@ -49,6 +52,7 @@ export default function App() {
   const [showSetupModal, setShowSetupModal] = useState(false);
   const [showHangarModal, setShowHangarModal] = useState(false);
   const [showSettingsModal, setShowSettingsModal] = useState(false);
+  const [showSystemsPanel, setShowSystemsPanel] = useState(false);
   const [flightSummary, setFlightSummary] = useState<FlightSummary | null>(null);
   const flightSummaryRef = useRef<FlightSummary | null>(null);
   const [isMuted, setIsMuted] = useState(false);
@@ -73,6 +77,7 @@ export default function App() {
     flightPlanRef.current = plan;
     const physics = new FlightPhysics(plan);
     physicsRef.current = physics;
+    systemsRef.current = new CompleteSimulationSystems(plan);
     const initialRunwayAlt = plan.origin.runways[0]?.altitudeMeters || 38;
     const initialState = physics.initFlightState(initialRunwayAlt);
     stateRef.current = initialState;
@@ -116,9 +121,10 @@ export default function App() {
       if (rendererInternals.externalAircraftGroup) rendererInternals.externalAircraftGroup.visible = visualModelRef.current === 'detailed' && plan.aircraft.id === 'a320';
       if (rendererInternals.fallbackAircraft) rendererInternals.fallbackAircraft.visible = !(visualModelRef.current === 'detailed' && plan.aircraft.id === 'a320');
       simulationClockRef.current.advance(deltaSec, (fixedDt) => { if (stateRef.current && physicsRef.current) physicsRef.current.update(stateRef.current, fixedDt, flightPlanRef.current.origin.runways[0]?.altitudeMeters || 38, flightPlanRef.current.destination.worldX, flightPlanRef.current.destination.worldZ); });
+      systemsRef.current?.update(state, deltaSec, deltaMs);
       globalAudio.update(state); rendererRef.current.update(state, deltaSec);
       const newAtc = atcRef.current.getTransmissionForPhase(state.phase, plan); if (newAtc) { setCurrentAtcMessage(newAtc); globalAudio.playChime(); }
-      if ((state.phase === 'gate_arrival' || state.phase === 'crashed') && !flightSummaryRef.current) { const summary = physicsRef.current.getFlightSummary(state); flightSummaryRef.current = summary; setFlightSummary(summary); }
+      if ((state.phase === 'gate_arrival' || state.phase === 'crashed') && !flightSummaryRef.current) { const summary = physicsRef.current.getFlightSummary(state); flightSummaryRef.current = summary; setFlightSummary(summary); systemsRef.current?.career.completeLanding(plan.origin.code, plan.destination.code, state.touchdownFpm); }
       if (frameCount % 3 === 0) setUiState({ ...state });
     };
     animId = requestAnimationFrame(tick);
@@ -147,7 +153,6 @@ export default function App() {
     const nextPlan: FlightPlan = { ...current, aircraft, cruisingAltitudeFt: aircraft.id === 'b777' ? 35000 : aircraft.id === 'e195' ? 30000 : 33000, maxPassengers: capacity, passengers: Math.min(current.passengers, capacity), fuelKg: Math.min(current.fuelKg, aircraft.fuelCapacityKg) };
     try { localStorage.setItem('flight-sim-hangar-preference', JSON.stringify({ aircraftId: aircraft.id, visualModel: model })); } catch { /* optional */ }
     setFlightPlan(nextPlan); applyVisualModel(model);
-    // Recreate the renderer so geometry is built from the selected aircraft definition.
     if (canvasContainerRef.current && rendererRef.current) {
       rendererRef.current.destroy();
       const nextRenderer = new WorldRenderer(canvasContainerRef.current, nextPlan);
@@ -164,7 +169,11 @@ export default function App() {
     {showDevMetrics && uiState && <DevMetricsPanel fps={fps} frameTimeMs={frameTimeMs} state={uiState} cameraMode={cameraMode} />}
     {uiState && <div className="absolute top-12 sm:top-14 inset-x-0 pointer-events-none flex flex-col items-center gap-1 z-20"><FlightPhaseBar state={uiState} plan={flightPlan} atcMessage={currentAtcMessage} /></div>}
     {showTutorial && uiState && <QuickTutorial state={uiState} onDismiss={() => setShowTutorial(false)} onFullThrottle={handleFullThrottle} />}
-    <div className="absolute top-3 left-1/2 -translate-x-1/2 z-40 pointer-events-auto"><button onClick={() => setShowHangarModal(true)} className="flex items-center gap-2 rounded-full border border-cyan-400/40 bg-slate-950/85 px-4 py-2 text-xs font-black text-white shadow-xl backdrop-blur-md hover:bg-slate-900 hover:border-cyan-300 transition-all" title="Open aircraft hangar"><Plane className="w-4 h-4 text-cyan-300" /><span>HANGAR</span><span className="hidden sm:inline text-slate-400 font-mono">{flightPlan.aircraft.name}</span></button></div>
+    <div className="absolute top-3 left-1/2 -translate-x-1/2 z-40 pointer-events-auto flex gap-2">
+      <button onClick={() => setShowHangarModal(true)} className="flex items-center gap-2 rounded-full border border-cyan-400/40 bg-slate-950/85 px-4 py-2 text-xs font-black text-white shadow-xl backdrop-blur-md hover:bg-slate-900 hover:border-cyan-300 transition-all" title="Open aircraft hangar"><Plane className="w-4 h-4 text-cyan-300" /><span>HANGAR</span><span className="hidden sm:inline text-slate-400 font-mono">{flightPlan.aircraft.name}</span></button>
+      <button onClick={() => setShowSystemsPanel(v => !v)} className="flex items-center gap-2 rounded-full border border-cyan-400/30 bg-slate-950/85 px-3 py-2 text-xs font-black text-white shadow-xl backdrop-blur-md hover:bg-slate-900 transition-all" title="Open simulation systems"><Radar className="w-4 h-4 text-cyan-300" /><span className="hidden sm:inline">SYSTEMS</span></button>
+    </div>
+    {showSystemsPanel && uiState && systemsRef.current && <div className="absolute top-16 right-3 z-40 pointer-events-auto"><SimulationSystemsPanel systems={systemsRef.current} state={uiState} plan={flightPlan} /></div>}
     {uiState && showCockpitInstruments && <div className="absolute top-24 left-4 pointer-events-auto z-30 animate-in fade-in zoom-in-95"><div className="relative"><button onClick={() => setShowCockpitInstruments(false)} className="absolute -top-3 -right-3 z-40 bg-red-600 hover:bg-red-500 text-white rounded-full w-6 h-6 flex items-center justify-center text-xs font-bold shadow-lg" title="Close Avionics">✕</button><CockpitDisplay state={uiState} plan={flightPlan} /></div></div>}
     {uiState && <FlightControlsOverlay state={uiState} plan={flightPlan} cameraMode={cameraMode} onCameraChange={handleCameraChange} onPitchRoll={handlePitchRoll} onYaw={handleYaw} onThrottle={handleThrottle} onToggleGear={handleToggleGear} onFlapsChange={handleFlapsChange} onToggleSpoilers={handleToggleSpoilers} onToggleBrakes={handleToggleBrakes} onToggleReverseThrust={handleToggleReverseThrust} onToggleEngines={handleToggleEngines} onToggleAutopilot={handleToggleAutopilot} onToggleMute={handleToggleMute} isMuted={isMuted} onOpenSettings={() => setShowSettingsModal(true)} onResetFlight={handleRestartFlight} onOpenTutorial={() => setShowTutorial(true)} timeCompression={timeCompression} onSetTimeCompression={setTimeCompression} showCockpitInstruments={showCockpitInstruments} onToggleCockpitInstruments={() => setShowCockpitInstruments(!showCockpitInstruments)} />}
     {showHangarModal && <HangarModal currentAircraft={flightPlan.aircraft} currentVisualModel={visualModel} onSelect={handleHangarSelection} onClose={() => setShowHangarModal(false)} />}
