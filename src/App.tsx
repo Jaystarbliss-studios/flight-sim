@@ -11,12 +11,14 @@ import { FlightControlsOverlay } from './components/FlightControlsOverlay';
 import { FlightPhaseBar } from './components/FlightPhaseBar';
 import { FlightResultModal } from './components/FlightResultModal';
 import { FlightSetupModal } from './components/FlightSetupModal';
+import { HangarModal, VisualModel } from './components/HangarModal';
 import { SettingsModal } from './components/SettingsModal';
 import { DevMetricsPanel } from './components/DevMetricsPanel';
 import { QuickTutorial } from './components/QuickTutorial';
 import { FlightVisualOverlay } from './components/FlightVisualOverlay';
 import { SimulationClock } from './core/SimulationClock';
 import { KeyboardFlightControls } from './controls/KeyboardFlightControls';
+import { Plane } from 'lucide-react';
 
 export default function App() {
   const canvasContainerRef = useRef<HTMLDivElement | null>(null);
@@ -25,6 +27,7 @@ export default function App() {
   const atcRef = useRef<AtcSystem>(new AtcSystem());
   const simulationClockRef = useRef(new SimulationClock({ stepSeconds: 1 / 60, maxFrameSeconds: 0.1, maxStepsPerFrame: 8 }));
   const timeCompressionRef = useRef(1);
+  const visualModelRef = useRef<VisualModel>('procedural');
 
   const [flightPlan, setFlightPlan] = useState<FlightPlan>(() => ({
     aircraft: AIRCRAFTS[0], origin: AIRPORTS[0], destination: AIRPORTS[0],
@@ -34,12 +37,12 @@ export default function App() {
   }));
   const flightPlanRef = useRef<FlightPlan>(flightPlan);
 
-  const stateRef = useRef<FlightState | null>(null);
   const [uiState, setUiState] = useState<FlightState | null>(null);
   const [cameraMode, setCameraMode] = useState<CameraMode>('chase');
   const [showTutorial, setShowTutorial] = useState(true);
   const [showCockpitInstruments, setShowCockpitInstruments] = useState(false);
   const [showSetupModal, setShowSetupModal] = useState(false);
+  const [showHangarModal, setShowHangarModal] = useState(false);
   const [showSettingsModal, setShowSettingsModal] = useState(false);
   const [flightSummary, setFlightSummary] = useState<FlightSummary | null>(null);
   const flightSummaryRef = useRef<FlightSummary | null>(null);
@@ -49,8 +52,17 @@ export default function App() {
   const [currentAtcMessage, setCurrentAtcMessage] = useState<AtcMessage | null>(null);
   const [fps, setFps] = useState(60);
   const [frameTimeMs, setFrameTimeMs] = useState(16.6);
+  const [visualModel, setVisualModel] = useState<VisualModel>('procedural');
   const isMouseDownRef = useRef(false);
   const lastMousePosRef = useRef({ x: 0, y: 0 });
+
+  const applyVisualModel = useCallback((model: VisualModel) => {
+    visualModelRef.current = model;
+    setVisualModel(model);
+    const renderer = rendererRef.current as unknown as { externalAircraftGroup?: { visible: boolean }; fallbackAircraft?: { visible: boolean } } | null;
+    if (renderer?.externalAircraftGroup) renderer.externalAircraftGroup.visible = model === 'detailed';
+    if (renderer?.fallbackAircraft) renderer.fallbackAircraft.visible = model !== 'detailed';
+  }, []);
 
   const initSimulation = useCallback((plan: FlightPlan) => {
     flightPlanRef.current = plan;
@@ -70,6 +82,8 @@ export default function App() {
     if (rendererRef.current) rendererRef.current.setPlan(plan);
   }, []);
 
+  const stateRef = useRef<FlightState | null>(null);
+
   useEffect(() => { timeCompressionRef.current = timeCompression; }, [timeCompression]);
 
   useEffect(() => {
@@ -78,6 +92,7 @@ export default function App() {
     const renderer = new WorldRenderer(container, flightPlanRef.current);
     rendererRef.current = renderer;
     initSimulation(flightPlanRef.current);
+    applyVisualModel(visualModelRef.current);
 
     const handlePointerDown = (e: PointerEvent) => {
       if ((e.target as HTMLElement).tagName === 'CANVAS') {
@@ -127,6 +142,12 @@ export default function App() {
       const plan = flightPlanRef.current;
       state.timeCompression = timeCompressionRef.current;
 
+      // The detailed asset is opt-in. The procedural model is the stable default,
+      // so a late network asset can never silently replace the aircraft the pilot chose.
+      const rendererInternals = rendererRef.current as unknown as { externalAircraftGroup?: { visible: boolean }; fallbackAircraft?: { visible: boolean } };
+      if (rendererInternals.externalAircraftGroup) rendererInternals.externalAircraftGroup.visible = visualModelRef.current === 'detailed' && plan.aircraft.id === 'a320';
+      if (rendererInternals.fallbackAircraft) rendererInternals.fallbackAircraft.visible = !(visualModelRef.current === 'detailed' && plan.aircraft.id === 'a320');
+
       simulationClockRef.current.advance(deltaSec, (fixedDt) => {
         if (!stateRef.current || !physicsRef.current) return;
         physicsRef.current.update(
@@ -163,7 +184,7 @@ export default function App() {
       window.removeEventListener('wheel', handleWheel);
       renderer.destroy();
     };
-  }, [initSimulation]);
+  }, [initSimulation, applyVisualModel]);
 
   const handlePitchRoll = (pitch: number, roll: number) => {
     if (!stateRef.current) return;
@@ -192,6 +213,19 @@ export default function App() {
   const handleToggleMute = () => setIsMuted(globalAudio.toggleMute());
   const handleConfirmPlan = (newPlan: FlightPlan) => { setFlightPlan(newPlan); setShowSetupModal(false); initSimulation(newPlan); };
   const handleRestartFlight = () => initSimulation(flightPlanRef.current);
+  const handleHangarSelection = (aircraft: typeof AIRCRAFTS[number], model: VisualModel) => {
+    const current = flightPlanRef.current;
+    const nextPlan: FlightPlan = {
+      ...current,
+      aircraft,
+      maxPassengers: Math.min(current.maxPassengers, aircraft.id === 'b777' ? 396 : aircraft.id === 'e195' ? 146 : 180),
+      passengers: Math.min(current.passengers, aircraft.id === 'b777' ? 396 : aircraft.id === 'e195' ? 146 : 180),
+      fuelKg: Math.min(current.fuelKg, aircraft.fuelCapacityKg),
+    };
+    setFlightPlan(nextPlan);
+    applyVisualModel(model);
+    initSimulation(nextPlan);
+  };
 
   return (
     <div className="relative w-screen h-screen overflow-hidden bg-black select-none font-sans">
@@ -200,8 +234,18 @@ export default function App() {
       {showDevMetrics && uiState && <DevMetricsPanel fps={fps} frameTimeMs={frameTimeMs} state={uiState} cameraMode={cameraMode} />}
       {uiState && <div className="absolute top-12 sm:top-14 inset-x-0 pointer-events-none flex flex-col items-center gap-1 z-20"><FlightPhaseBar state={uiState} plan={flightPlan} atcMessage={currentAtcMessage} /></div>}
       {showTutorial && uiState && <QuickTutorial state={uiState} onDismiss={() => setShowTutorial(false)} onFullThrottle={handleFullThrottle} />}
+
+      <div className="absolute top-3 left-1/2 -translate-x-1/2 z-40 pointer-events-auto">
+        <button onClick={() => setShowHangarModal(true)} className="flex items-center gap-2 rounded-full border border-cyan-400/40 bg-slate-950/85 px-4 py-2 text-xs font-black text-white shadow-xl backdrop-blur-md hover:bg-slate-900 hover:border-cyan-300 transition-all" title="Open aircraft hangar">
+          <Plane className="w-4 h-4 text-cyan-300" />
+          <span>HANGAR</span>
+          <span className="hidden sm:inline text-slate-400 font-mono">{flightPlan.aircraft.name}</span>
+        </button>
+      </div>
+
       {uiState && showCockpitInstruments && <div className="absolute top-24 left-4 pointer-events-auto z-30 animate-in fade-in zoom-in-95"><div className="relative"><button onClick={() => setShowCockpitInstruments(false)} className="absolute -top-3 -right-3 z-40 bg-red-600 hover:bg-red-500 text-white rounded-full w-6 h-6 flex items-center justify-center text-xs font-bold shadow-lg" title="Close Avionics">✕</button><CockpitDisplay state={uiState} plan={flightPlan} /></div></div>}
       {uiState && <FlightControlsOverlay state={uiState} plan={flightPlan} cameraMode={cameraMode} onCameraChange={handleCameraChange} onPitchRoll={handlePitchRoll} onYaw={handleYaw} onThrottle={handleThrottle} onToggleGear={handleToggleGear} onFlapsChange={handleFlapsChange} onToggleSpoilers={handleToggleSpoilers} onToggleBrakes={handleToggleBrakes} onToggleReverseThrust={handleToggleReverseThrust} onToggleEngines={handleToggleEngines} onToggleAutopilot={handleToggleAutopilot} onToggleMute={handleToggleMute} isMuted={isMuted} onOpenSettings={() => setShowSettingsModal(true)} onResetFlight={handleRestartFlight} onOpenTutorial={() => setShowTutorial(true)} timeCompression={timeCompression} onSetTimeCompression={setTimeCompression} showCockpitInstruments={showCockpitInstruments} onToggleCockpitInstruments={() => setShowCockpitInstruments(!showCockpitInstruments)} />}
+      {showHangarModal && <HangarModal currentAircraft={flightPlan.aircraft} currentVisualModel={visualModel} onSelect={handleHangarSelection} onClose={() => setShowHangarModal(false)} />}
       {showSetupModal && <FlightSetupModal currentPlan={flightPlan} onConfirmPlan={handleConfirmPlan} onClose={() => setShowSetupModal(false)} />}
       {showSettingsModal && <SettingsModal assistance={flightPlan.assistance} onSetAssistance={(lvl) => setFlightPlan({ ...flightPlan, assistance: lvl })} showDevMetrics={showDevMetrics} onToggleDevMetrics={() => setShowDevMetrics(!showDevMetrics)} onClose={() => setShowSettingsModal(false)} />}
       {flightSummary && <FlightResultModal summary={flightSummary} onRestart={handleRestartFlight} onClose={() => { flightSummaryRef.current = null; setFlightSummary(null); }} />}
