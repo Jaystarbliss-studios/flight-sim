@@ -26,6 +26,7 @@ for (const aircraft of AIRCRAFTS) {
   const state = physics.initFlightState(38);
   assert(state.enginesRunning, `${aircraft.id}: engines should initialize running`);
   assert(state.gearDown && state.gearPosition === 1, `${aircraft.id}: landing gear should start down`);
+  assert(state.parkingBrake, `${aircraft.id}: parking brake should be engaged at spawn`);
   assert(state.currentWeightKg <= aircraft.maxTakeoffWeightKg, `${aircraft.id}: dispatch weight exceeds MTOW`);
   state.throttle = 1;
   physics.update(state, 1 / 60, 38, plan.destination.worldX, plan.destination.worldZ);
@@ -33,13 +34,28 @@ for (const aircraft of AIRCRAFTS) {
   assert(state.fuelRemainingKg < plan.fuelKg, `${aircraft.id}: fuel burn did not occur`);
 }
 
+// Full A320 ground-roll + rotation scenario. This intentionally exercises the
+// same sequence a player uses: release brake, apply thrust, then pull at VR.
 const a320Plan = makePlan(AIRCRAFTS[0]);
 const a320 = new FlightPhysics(a320Plan);
 const flight = a320.initFlightState(38);
 flight.throttle = 1;
 flight.parkingBrake = false;
-for (let i = 0; i < 180; i++) a320.update(flight, 1 / 60, 38, a320Plan.destination.worldX, a320Plan.destination.worldZ);
-assert(flight.airspeedKnots > 0, 'A320 should accelerate under thrust');
-assert(!flight.isCrashed, 'A320 should not crash during the initial acceleration smoke test');
+let sawTakeoffRoll = false;
+let sawRotation = false;
+
+for (let i = 0; i < 4200; i++) {
+  if (flight.airspeedKnots >= a320Plan.aircraft.vrKnots - 2) flight.pitchInput = 1;
+  a320.update(flight, 1 / 60, 38, a320Plan.destination.worldX, a320Plan.destination.worldZ);
+  sawTakeoffRoll ||= flight.phase === 'takeoff_roll';
+  sawRotation ||= flight.phase === 'rotation' || flight.phase === 'initial_climb';
+  if (flight.altitudeFt > 1000) break;
+}
+
+assert(flight.airspeedKnots > a320Plan.aircraft.vrKnots * 0.9, 'A320 should reach rotation speed under full thrust');
+assert(sawTakeoffRoll, 'A320 should enter the takeoff-roll phase');
+assert(sawRotation, 'A320 should transition through rotation/initial climb');
+assert(flight.y > 41.25, 'A320 should actually lift off instead of being scripted upward');
+assert(!flight.isCrashed, 'A320 should not crash during takeoff');
 
 console.log('Flight simulator smoke tests passed.');
