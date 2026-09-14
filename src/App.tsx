@@ -14,6 +14,7 @@ import { FlightSetupModal } from './components/FlightSetupModal';
 import { SettingsModal } from './components/SettingsModal';
 import { DevMetricsPanel } from './components/DevMetricsPanel';
 import { QuickTutorial } from './components/QuickTutorial';
+import { FlightVisualOverlay } from './components/FlightVisualOverlay';
 import { SimulationClock } from './core/SimulationClock';
 import { KeyboardFlightControls } from './controls/KeyboardFlightControls';
 
@@ -195,6 +196,7 @@ export default function App() {
   return (
     <div className="relative w-screen h-screen overflow-hidden bg-black select-none font-sans">
       <div ref={canvasContainerRef} className="absolute inset-0 w-full h-full cursor-grab active:cursor-grabbing" />
+      {uiState && <FlightVisualOverlay state={uiState} />}
       {showDevMetrics && uiState && <DevMetricsPanel fps={fps} frameTimeMs={frameTimeMs} state={uiState} cameraMode={cameraMode} />}
       {uiState && <div className="absolute top-12 sm:top-14 inset-x-0 pointer-events-none flex flex-col items-center gap-1 z-20"><FlightPhaseBar state={uiState} plan={flightPlan} atcMessage={currentAtcMessage} /></div>}
       {showTutorial && uiState && <QuickTutorial state={uiState} onDismiss={() => setShowTutorial(false)} onFullThrottle={handleFullThrottle} />}
