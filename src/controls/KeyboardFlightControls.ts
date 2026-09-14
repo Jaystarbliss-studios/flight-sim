@@ -1,17 +1,16 @@
 import { FlightState } from '../types';
 
+type CameraMode = 'cockpit' | 'chase' | 'wing' | 'gear';
+
 /** Desktop keyboard layer. It owns input state; physics remains responsible for aircraft response. */
 export class KeyboardFlightControls {
-  private readonly state: FlightState;
-  private readonly onCamera: (mode: 'cockpit' | 'chase' | 'wing' | 'gear') => void;
+  private readonly getState: () => FlightState | null;
+  private readonly onCamera: (mode: CameraMode) => void;
   private readonly pressed = new Set<string>();
   private attached = false;
 
-  constructor(
-    state: FlightState,
-    onCamera: (mode: 'cockpit' | 'chase' | 'wing' | 'gear') => void
-  ) {
-    this.state = state;
+  constructor(getState: () => FlightState | null, onCamera: (mode: CameraMode) => void) {
+    this.getState = getState;
     this.onCamera = onCamera;
   }
 
@@ -41,28 +40,30 @@ export class KeyboardFlightControls {
       || event.key === 'ArrowUp' || event.key === 'ArrowDown' || event.key === 'ArrowLeft' || event.key === 'ArrowRight';
 
     if (handled) event.preventDefault();
-
     if (event.repeat) return;
+
+    const state = this.getState();
+    if (!state) return;
     this.pressed.add(key);
 
     switch (key) {
       case 'g':
-        this.state.gearDown = !this.state.gearDown;
+        state.gearDown = !state.gearDown;
         break;
       case 'f':
-        this.state.flapsIndex = Math.min(4, this.state.flapsIndex + 1);
+        state.flapsIndex = Math.min(4, state.flapsIndex + 1);
         break;
       case 'r':
-        this.state.flapsIndex = Math.max(0, this.state.flapsIndex - 1);
+        state.flapsIndex = Math.max(0, state.flapsIndex - 1);
         break;
       case 'b':
-        this.state.brakesActive = true;
+        state.brakesActive = true;
         break;
       case 'q':
-        this.state.yawInput = -1;
+        state.yawInput = -1;
         break;
       case 'e':
-        this.state.yawInput = 1;
+        state.yawInput = 1;
         break;
       case '1':
         this.onCamera('cockpit');
@@ -77,41 +78,45 @@ export class KeyboardFlightControls {
         this.onCamera('gear');
         break;
       case ' ':
-        this.state.parkingBrake = !this.state.parkingBrake;
+        state.parkingBrake = !state.parkingBrake;
         break;
       case 'escape':
-        this.state.pitchInput = 0;
-        this.state.rollInput = 0;
-        this.state.yawInput = 0;
+        state.pitchInput = 0;
+        state.rollInput = 0;
+        state.yawInput = 0;
         break;
     }
 
-    this.applyAxes();
+    this.applyAxes(state);
   };
 
   private handleKeyUp = (event: KeyboardEvent) => {
+    const state = this.getState();
     const key = event.key.toLowerCase();
     this.pressed.delete(key);
-    if (key === 'b') this.state.brakesActive = false;
-    if (key === 'q' || key === 'e') this.state.yawInput = 0;
-    this.applyAxes();
+    if (!state) return;
+    if (key === 'b') state.brakesActive = false;
+    if (key === 'q' || key === 'e') state.yawInput = 0;
+    this.applyAxes(state);
   };
 
   private handleBlur = () => {
     this.pressed.clear();
-    this.state.pitchInput = 0;
-    this.state.rollInput = 0;
-    this.state.yawInput = 0;
-    this.state.brakesActive = false;
+    const state = this.getState();
+    if (!state) return;
+    state.pitchInput = 0;
+    state.rollInput = 0;
+    state.yawInput = 0;
+    state.brakesActive = false;
   };
 
-  private applyAxes() {
+  private applyAxes(state: FlightState) {
     const up = this.pressed.has('w') || this.pressed.has('arrowup');
     const down = this.pressed.has('s') || this.pressed.has('arrowdown');
     const left = this.pressed.has('a') || this.pressed.has('arrowleft');
     const right = this.pressed.has('d') || this.pressed.has('arrowright');
 
-    this.state.pitchInput = (up ? 1 : 0) + (down ? -1 : 0);
-    this.state.rollInput = (right ? 1 : 0) + (left ? -1 : 0);
+    state.pitchInput = (up ? 1 : 0) + (down ? -1 : 0);
+    state.rollInput = (right ? 1 : 0) + (left ? -1 : 0);
   }
 }
