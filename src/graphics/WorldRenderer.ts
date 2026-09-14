@@ -3,10 +3,8 @@ import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import { CameraMode, FlightPlan, FlightState, WeatherType, TimeOfDay } from '../types';
 
 /**
- * Production renderer for milestone 1.
- * The simulation remains authoritative: this class only presents the state.
- * A remote CC-BY aircraft model is attempted first and the procedural model
- * remains as a zero-dependency fallback if the asset cannot be fetched.
+ * Production renderer. Simulation state remains authoritative; this class presents it.
+ * Detailed aircraft assets are explicitly opt-in from the hangar.
  */
 export class WorldRenderer {
   private container: HTMLElement;
@@ -14,7 +12,6 @@ export class WorldRenderer {
   private camera: THREE.PerspectiveCamera;
   private renderer: THREE.WebGLRenderer;
   private plan: FlightPlan;
-
   private cameraMode: CameraMode = 'chase';
   private cameraOrbitYaw = 0;
   private cameraOrbitPitch = 0.14;
@@ -22,7 +19,6 @@ export class WorldRenderer {
   private cameraTargetPosition = new THREE.Vector3();
   private cameraTargetLook = new THREE.Vector3();
   private cameraInitialized = false;
-
   private aircraftGroup: THREE.Group;
   private externalAircraftGroup: THREE.Group | null = null;
   private fallbackAircraft: THREE.Group;
@@ -32,7 +28,6 @@ export class WorldRenderer {
   private spoilerMeshes: THREE.Mesh[] = [];
   private elevator!: THREE.Mesh;
   private rudder!: THREE.Mesh;
-
   private sunLight!: THREE.DirectionalLight;
   private hemiLight!: THREE.HemisphereLight;
   private skyMesh!: THREE.Mesh;
@@ -47,14 +42,11 @@ export class WorldRenderer {
   constructor(container: HTMLElement, plan: FlightPlan) {
     this.container = container;
     this.plan = plan;
-
     this.scene = new THREE.Scene();
     this.scene.fog = new THREE.FogExp2(0xb8cce0, 0.000055);
-
     const aspect = Math.max(1, container.clientWidth) / Math.max(1, container.clientHeight);
     this.camera = new THREE.PerspectiveCamera(58, aspect, 0.25, 100000);
     this.camera.position.set(0, 9, -42);
-
     this.renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' });
     this.renderer.setSize(container.clientWidth, container.clientHeight);
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 1.75));
@@ -64,12 +56,10 @@ export class WorldRenderer {
     this.renderer.toneMappingExposure = 1.05;
     this.renderer.outputColorSpace = THREE.SRGBColorSpace;
     container.appendChild(this.renderer.domElement);
-
     this.aircraftGroup = new THREE.Group();
     this.fallbackAircraft = new THREE.Group();
     this.aircraftGroup.add(this.fallbackAircraft);
     this.scene.add(this.aircraftGroup);
-
     this.setupLighting();
     this.buildSkyAndAtmosphere();
     this.buildAircraft();
@@ -78,34 +68,21 @@ export class WorldRenderer {
     this.buildTerrain();
     this.buildWeather();
     this.applyTimeAndWeather(plan.timeOfDay, plan.weather);
-
     window.addEventListener('resize', this.onWindowResize);
   }
 
-  public setCameraMode(mode: CameraMode) {
-    this.cameraMode = mode;
-    this.cameraInitialized = false;
-  }
-
-  public setPlan(plan: FlightPlan) {
-    this.plan = plan;
-    this.applyTimeAndWeather(plan.timeOfDay, plan.weather);
-  }
-
+  public setCameraMode(mode: CameraMode) { this.cameraMode = mode; this.cameraInitialized = false; }
+  public setPlan(plan: FlightPlan) { this.plan = plan; this.applyTimeAndWeather(plan.timeOfDay, plan.weather); }
   public rotateCamera(deltaYaw: number, deltaPitch: number) {
     if (this.cameraMode === 'cockpit') return;
     this.cameraOrbitYaw += deltaYaw;
     this.cameraOrbitPitch = THREE.MathUtils.clamp(this.cameraOrbitPitch + deltaPitch, -1.0, 1.0);
   }
-
-  public zoomCamera(deltaDist: number) {
-    this.cameraDistance = THREE.MathUtils.clamp(this.cameraDistance + deltaDist, 16, 130);
-  }
+  public zoomCamera(deltaDist: number) { this.cameraDistance = THREE.MathUtils.clamp(this.cameraDistance + deltaDist, 16, 130); }
 
   private setupLighting() {
     this.hemiLight = new THREE.HemisphereLight(0xdcecff, 0x30402f, 1.15);
     this.scene.add(this.hemiLight);
-
     this.sunLight = new THREE.DirectionalLight(0xfff2d7, 2.0);
     this.sunLight.position.set(1800, 4200, 1200);
     this.sunLight.castShadow = true;
@@ -124,11 +101,7 @@ export class WorldRenderer {
     const skyMat = new THREE.MeshBasicMaterial({ color: 0x79aee0, side: THREE.BackSide, fog: false });
     this.skyMesh = new THREE.Mesh(skyGeo, skyMat);
     this.scene.add(this.skyMesh);
-
-    const water = new THREE.Mesh(
-      new THREE.PlaneGeometry(100000, 100000),
-      new THREE.MeshStandardMaterial({ color: 0x173b55, roughness: 0.18, metalness: 0.72 }),
-    );
+    const water = new THREE.Mesh(new THREE.PlaneGeometry(100000, 100000), new THREE.MeshStandardMaterial({ color: 0x173b55, roughness: 0.18, metalness: 0.72 }));
     water.rotation.x = -Math.PI / 2;
     water.position.y = 34.5;
     water.receiveShadow = true;
@@ -141,444 +114,183 @@ export class WorldRenderer {
     const dark = new THREE.MeshStandardMaterial({ color: 0x20242a, metalness: 0.72, roughness: 0.24 });
     const accent = new THREE.MeshStandardMaterial({ color: 0x075ca8, metalness: 0.48, roughness: 0.3 });
     const glass = new THREE.MeshPhysicalMaterial({ color: 0x10283b, metalness: 0.25, roughness: 0.08, transmission: 0.55, transparent: true, opacity: 0.9 });
-
     const fuselage = new THREE.Mesh(new THREE.CapsuleGeometry(2.05, Math.max(18, spec.lengthM - 7), 8, 24), body);
-    fuselage.rotation.x = Math.PI / 2;
-    fuselage.castShadow = true;
-    this.fallbackAircraft.add(fuselage);
-
+    fuselage.rotation.x = Math.PI / 2; fuselage.castShadow = true; this.fallbackAircraft.add(fuselage);
     const nose = new THREE.Mesh(new THREE.ConeGeometry(2.02, 5.6, 24), body);
-    nose.rotation.x = Math.PI / 2;
-    nose.position.z = spec.lengthM * 0.47;
-    nose.castShadow = true;
-    this.fallbackAircraft.add(nose);
-
+    nose.rotation.x = Math.PI / 2; nose.position.z = spec.lengthM * 0.47; nose.castShadow = true; this.fallbackAircraft.add(nose);
     const windshield = new THREE.Mesh(new THREE.SphereGeometry(1, 16, 8), glass);
-    windshield.scale.set(1.0, 0.45, 1.3);
-    windshield.position.set(0, 1.05, spec.lengthM * 0.37);
-    this.fallbackAircraft.add(windshield);
-
+    windshield.scale.set(1.0, 0.45, 1.3); windshield.position.set(0, 1.05, spec.lengthM * 0.37); this.fallbackAircraft.add(windshield);
     const wing = new THREE.Mesh(new THREE.BoxGeometry(spec.wingSpanM, 0.38, 10.5), body);
-    wing.position.set(0, -0.12, 2.0);
-    wing.rotation.y = -0.08;
-    wing.castShadow = true;
-    this.fallbackAircraft.add(wing);
-
+    wing.position.set(0, -0.12, 2.0); wing.rotation.y = -0.08; wing.castShadow = true; this.fallbackAircraft.add(wing);
     const tailWing = new THREE.Mesh(new THREE.BoxGeometry(spec.wingSpanM * 0.36, 0.26, 4.2), body);
-    tailWing.position.set(0, 1.15, -spec.lengthM * 0.43);
-    tailWing.castShadow = true;
-    this.fallbackAircraft.add(tailWing);
-
+    tailWing.position.set(0, 1.15, -spec.lengthM * 0.43); tailWing.castShadow = true; this.fallbackAircraft.add(tailWing);
     const fin = new THREE.Mesh(new THREE.BoxGeometry(0.42, 6.3, 4.0), accent);
-    fin.position.set(0, 3.15, -spec.lengthM * 0.43);
-    fin.castShadow = true;
-    this.fallbackAircraft.add(fin);
-
+    fin.position.set(0, 3.15, -spec.lengthM * 0.43); fin.castShadow = true; this.fallbackAircraft.add(fin);
     this.elevator = new THREE.Mesh(new THREE.BoxGeometry(spec.wingSpanM * 0.33, 0.18, 1.15), dark);
-    this.elevator.position.set(0, 1.1, -spec.lengthM * 0.53);
-    this.fallbackAircraft.add(this.elevator);
-
+    this.elevator.position.set(0, 1.1, -spec.lengthM * 0.53); this.fallbackAircraft.add(this.elevator);
     this.rudder = new THREE.Mesh(new THREE.BoxGeometry(0.28, 4.4, 1.0), dark);
-    this.rudder.position.set(0, 3.55, -spec.lengthM * 0.5);
-    this.fallbackAircraft.add(this.rudder);
-
-    const engineY = -1.15;
-    const engineZ = 1.9;
+    this.rudder.position.set(0, 3.55, -spec.lengthM * 0.5); this.fallbackAircraft.add(this.rudder);
+    const engineY = -1.15, engineZ = 1.9;
     for (const x of [-spec.wingSpanM * 0.31, spec.wingSpanM * 0.31]) {
       const engine = new THREE.Group();
       const nacelle = new THREE.Mesh(new THREE.CylinderGeometry(1.35, 1.2, 4.5, 24), body);
-      nacelle.rotation.x = Math.PI / 2;
-      nacelle.castShadow = true;
-      engine.add(nacelle);
+      nacelle.rotation.x = Math.PI / 2; nacelle.castShadow = true; engine.add(nacelle);
       const intake = new THREE.Mesh(new THREE.TorusGeometry(1.15, 0.13, 10, 24), dark);
-      intake.rotation.x = Math.PI / 2;
-      intake.position.z = 2.25;
-      engine.add(intake);
+      intake.rotation.x = Math.PI / 2; intake.position.z = 2.25; engine.add(intake);
       const fan = new THREE.Mesh(new THREE.CylinderGeometry(0.9, 0.9, 0.16, 16), dark);
-      fan.rotation.x = Math.PI / 2;
-      fan.position.z = 2.28;
-      engine.add(fan);
-      this.fanMeshes.push(fan);
-      engine.position.set(x, engineY, engineZ);
-      this.fallbackAircraft.add(engine);
+      fan.rotation.x = Math.PI / 2; fan.position.z = 2.28; engine.add(fan); this.fanMeshes.push(fan);
+      engine.position.set(x, engineY, engineZ); this.fallbackAircraft.add(engine);
     }
-
     this.gearGroup = new THREE.Group();
     const tire = new THREE.MeshStandardMaterial({ color: 0x101010, roughness: 0.92 });
     const strut = new THREE.MeshStandardMaterial({ color: 0x8d9398, metalness: 0.9, roughness: 0.18 });
     const makeWheel = (radius: number, x: number, y: number, z: number) => {
       const wheel = new THREE.Mesh(new THREE.CylinderGeometry(radius, radius, 0.38, 18), tire);
-      wheel.rotation.z = Math.PI / 2;
-      wheel.position.set(x, y, z);
-      wheel.castShadow = true;
-      this.gearGroup.add(wheel);
+      wheel.rotation.z = Math.PI / 2; wheel.position.set(x, y, z); wheel.castShadow = true; this.gearGroup.add(wheel);
     };
     const noseStrut = new THREE.Mesh(new THREE.CylinderGeometry(0.12, 0.12, 2.2, 10), strut);
-    noseStrut.position.set(0, -1.5, spec.lengthM * 0.31);
-    this.gearGroup.add(noseStrut);
-    makeWheel(0.46, 0.22, -2.6, spec.lengthM * 0.31);
-    makeWheel(0.46, -0.22, -2.6, spec.lengthM * 0.31);
+    noseStrut.position.set(0, -1.5, spec.lengthM * 0.31); this.gearGroup.add(noseStrut);
+    makeWheel(0.46, 0.22, -2.6, spec.lengthM * 0.31); makeWheel(0.46, -0.22, -2.6, spec.lengthM * 0.31);
     for (const x of [-3.25, 3.25]) {
       const mainStrut = new THREE.Mesh(new THREE.CylinderGeometry(0.18, 0.18, 2.9, 10), strut);
-      mainStrut.position.set(x, -1.65, -1.0);
-      this.gearGroup.add(mainStrut);
-      makeWheel(0.64, x - 0.28, -3.0, -0.6);
-      makeWheel(0.64, x + 0.28, -3.0, -1.5);
+      mainStrut.position.set(x, -1.65, -1.0); this.gearGroup.add(mainStrut);
+      makeWheel(0.64, x - 0.28, -3.0, -0.6); makeWheel(0.64, x + 0.28, -3.0, -1.5);
     }
     this.fallbackAircraft.add(this.gearGroup);
-
     for (const side of [-1, 1]) {
       const flap = new THREE.Mesh(new THREE.BoxGeometry(spec.wingSpanM * 0.22, 0.18, 1.4), dark);
-      flap.position.set(side * spec.wingSpanM * 0.22, -0.22, 1.2);
-      this.flapMeshes.push(flap);
-      this.fallbackAircraft.add(flap);
+      flap.position.set(side * spec.wingSpanM * 0.22, -0.22, 1.2); this.flapMeshes.push(flap); this.fallbackAircraft.add(flap);
       const spoiler = new THREE.Mesh(new THREE.BoxGeometry(spec.wingSpanM * 0.18, 0.09, 1.0), dark);
-      spoiler.position.set(side * spec.wingSpanM * 0.22, 0.18, 1.8);
-      this.spoilerMeshes.push(spoiler);
-      this.fallbackAircraft.add(spoiler);
+      spoiler.position.set(side * spec.wingSpanM * 0.22, 0.18, 1.8); this.spoilerMeshes.push(spoiler); this.fallbackAircraft.add(spoiler);
     }
-
-    const beacon = new THREE.PointLight(0xff2200, 4, 28);
-    beacon.position.set(0, 2.3, 0);
-    this.fallbackAircraft.add(beacon);
-    const navL = new THREE.PointLight(0xff1717, 2.5, 18);
-    navL.position.set(spec.wingSpanM * 0.5, 0, -2);
-    const navR = new THREE.PointLight(0x22ff66, 2.5, 18);
-    navR.position.set(-spec.wingSpanM * 0.5, 0, -2);
-    this.fallbackAircraft.add(navL, navR);
+    const beacon = new THREE.PointLight(0xff2200, 4, 28); beacon.position.set(0, 2.3, 0); this.fallbackAircraft.add(beacon);
+    const navL = new THREE.PointLight(0xff1717, 2.5, 18); navL.position.set(spec.wingSpanM * 0.5, 0, -2);
+    const navR = new THREE.PointLight(0x22ff66, 2.5, 18); navR.position.set(-spec.wingSpanM * 0.5, 0, -2); this.fallbackAircraft.add(navL, navR);
   }
 
   private loadExternalAircraft() {
     const url = 'https://raw.githubusercontent.com/amvlab/aircraft-models/main/models/A320_nologo.glb';
     const loader = new GLTFLoader();
-    loader.load(
-      url,
-      (gltf) => {
-        if (this.isDestroyed) return;
-        const root = gltf.scene;
-        root.traverse((obj) => {
-          if (obj instanceof THREE.Mesh) {
-            obj.castShadow = true;
-            obj.receiveShadow = true;
-          }
-        });
-        const box = new THREE.Box3().setFromObject(root);
-        const size = box.getSize(new THREE.Vector3());
-        const sourceLength = Math.max(size.x, size.y, size.z);
-        const targetLength = this.plan.aircraft.lengthM;
-        if (sourceLength > 0) root.scale.setScalar(targetLength / sourceLength);
-        root.rotation.y = Math.PI;
-        root.position.y = 0.4;
+    loader.load(url, (gltf) => {
+      if (this.isDestroyed) return;
+      const root = gltf.scene;
+      root.traverse((obj) => { if (obj instanceof THREE.Mesh) { obj.castShadow = true; obj.receiveShadow = true; } });
+      const box = new THREE.Box3().setFromObject(root);
+      const size = box.getSize(new THREE.Vector3());
+      const sourceLength = Math.max(size.x, size.y, size.z);
+      const targetLength = this.plan.aircraft.lengthM;
+      if (sourceLength > 0) root.scale.setScalar(targetLength / sourceLength);
 
-        this.externalAircraftGroup = new THREE.Group();
-        this.externalAircraftGroup.add(root);
-        this.aircraftGroup.add(this.externalAircraftGroup);
-        this.fallbackAircraft.visible = false;
-      },
-      undefined,
-      () => {
-        // Keep the procedural aircraft. It is deliberately a complete fallback.
-      },
-    );
+      // Normalize third-party asset axes into the simulator convention:
+      // aircraft nose points along +Z before the aircraft body's simulation yaw is applied.
+      const dims = [size.x, size.y, size.z];
+      const longestAxis = dims.indexOf(Math.max(...dims));
+      if (longestAxis === 0) root.rotation.y = Math.PI / 2;
+      else if (longestAxis === 1) root.rotation.x = -Math.PI / 2;
+      else root.rotation.y = 0;
+      root.updateMatrixWorld(true);
+      const orientedBox = new THREE.Box3().setFromObject(root);
+      const center = orientedBox.getCenter(new THREE.Vector3());
+      root.position.sub(center);
+      root.position.y += 0.4;
+
+      this.externalAircraftGroup = new THREE.Group();
+      this.externalAircraftGroup.add(root);
+      this.aircraftGroup.add(this.externalAircraftGroup);
+      // Never silently replace the player's selected visual model.
+      this.externalAircraftGroup.visible = false;
+    }, undefined, () => { /* procedural aircraft remains available */ });
   }
 
   private buildAirport() {
     this.airportGroup = new THREE.Group();
-    const runwayY = 38.04;
-    const length = 5500;
-    const width = 65;
+    const runwayY = 38.04, length = 5500, width = 65;
     const asphalt = new THREE.MeshStandardMaterial({ color: 0x25292e, roughness: 0.86, metalness: 0.08 });
     const marking = new THREE.MeshBasicMaterial({ color: 0xf7f7f2 });
     const runway = new THREE.Mesh(new THREE.PlaneGeometry(width, length), asphalt);
-    runway.rotation.x = -Math.PI / 2;
-    runway.position.set(0, runwayY, -length / 2 + 250);
-    runway.receiveShadow = true;
-    this.airportGroup.add(runway);
-
+    runway.rotation.x = -Math.PI / 2; runway.position.set(0, runwayY, -length / 2 + 250); runway.receiveShadow = true; this.airportGroup.add(runway);
     const edge = new THREE.MeshBasicMaterial({ color: 0xf4f4ed });
-    for (const x of [-width / 2 + 2.3, width / 2 - 2.3]) {
-      const line = new THREE.Mesh(new THREE.PlaneGeometry(1.0, length - 80), edge);
-      line.rotation.x = -Math.PI / 2;
-      line.position.set(x, runwayY + 0.015, -length / 2 + 250);
-      this.airportGroup.add(line);
-    }
-    for (let z = 150; z > -length + 330; z -= 45) {
-      const dash = new THREE.Mesh(new THREE.PlaneGeometry(1.7, 27), marking);
-      dash.rotation.x = -Math.PI / 2;
-      dash.position.set(0, runwayY + 0.02, z);
-      this.airportGroup.add(dash);
-    }
-    for (let i = -7; i <= 8; i++) {
-      const key = new THREE.Mesh(new THREE.PlaneGeometry(2.0, 34), marking);
-      key.rotation.x = -Math.PI / 2;
-      key.position.set(i * 3.2 - 1.6, runwayY + 0.02, 180);
-      this.airportGroup.add(key);
-    }
-    for (const x of [-14, 14]) {
-      for (let z = 80; z > -1800; z -= 120) {
-        const td = new THREE.Mesh(new THREE.PlaneGeometry(4, 25), marking);
-        td.rotation.x = -Math.PI / 2;
-        td.position.set(x, runwayY + 0.02, z);
-        this.airportGroup.add(td);
-      }
-    }
-
+    for (const x of [-width / 2 + 2.3, width / 2 - 2.3]) { const line = new THREE.Mesh(new THREE.PlaneGeometry(1.0, length - 80), edge); line.rotation.x = -Math.PI / 2; line.position.set(x, runwayY + 0.015, -length / 2 + 250); this.airportGroup.add(line); }
+    for (let z = 150; z > -length + 330; z -= 45) { const dash = new THREE.Mesh(new THREE.PlaneGeometry(1.7, 27), marking); dash.rotation.x = -Math.PI / 2; dash.position.set(0, runwayY + 0.02, z); this.airportGroup.add(dash); }
+    for (let i = -7; i <= 8; i++) { const key = new THREE.Mesh(new THREE.PlaneGeometry(2.0, 34), marking); key.rotation.x = -Math.PI / 2; key.position.set(i * 3.2 - 1.6, runwayY + 0.02, 180); this.airportGroup.add(key); }
+    for (const x of [-14, 14]) for (let z = 80; z > -1800; z -= 120) { const td = new THREE.Mesh(new THREE.PlaneGeometry(4, 25), marking); td.rotation.x = -Math.PI / 2; td.position.set(x, runwayY + 0.02, z); this.airportGroup.add(td); }
     const taxiMat = new THREE.MeshStandardMaterial({ color: 0x34383d, roughness: 0.9 });
-    const taxi = new THREE.Mesh(new THREE.PlaneGeometry(30, 1900), taxiMat);
-    taxi.rotation.x = -Math.PI / 2;
-    taxi.position.set(120, runwayY - 0.01, -450);
-    taxi.receiveShadow = true;
-    this.airportGroup.add(taxi);
-
-    const apron = new THREE.Mesh(new THREE.PlaneGeometry(420, 500), taxiMat);
-    apron.rotation.x = -Math.PI / 2;
-    apron.position.set(275, runwayY - 0.015, 100);
-    apron.receiveShadow = true;
-    this.airportGroup.add(apron);
-
+    const taxi = new THREE.Mesh(new THREE.PlaneGeometry(30, 1900), taxiMat); taxi.rotation.x = -Math.PI / 2; taxi.position.set(120, runwayY - 0.01, -450); taxi.receiveShadow = true; this.airportGroup.add(taxi);
+    const apron = new THREE.Mesh(new THREE.PlaneGeometry(420, 500), taxiMat); apron.rotation.x = -Math.PI / 2; apron.position.set(275, runwayY - 0.015, 100); apron.receiveShadow = true; this.airportGroup.add(apron);
     const terminalMat = new THREE.MeshStandardMaterial({ color: 0xdce4e9, metalness: 0.38, roughness: 0.3 });
     const glassMat = new THREE.MeshPhysicalMaterial({ color: 0x2b5c78, metalness: 0.45, roughness: 0.12, transmission: 0.15, transparent: true, opacity: 0.86 });
-    const terminal = new THREE.Mesh(new THREE.BoxGeometry(180, 32, 92), terminalMat);
-    terminal.position.set(385, 54, 120);
-    terminal.castShadow = true;
-    this.airportGroup.add(terminal);
-    const facade = new THREE.Mesh(new THREE.PlaneGeometry(170, 25), glassMat);
-    facade.rotation.y = -Math.PI / 2;
-    facade.position.set(294, 54, 120);
-    this.airportGroup.add(facade);
-
-    const tower = new THREE.Mesh(new THREE.CylinderGeometry(6, 8, 86, 16), terminalMat);
-    tower.position.set(220, 81, 355);
-    tower.castShadow = true;
-    this.airportGroup.add(tower);
-    const cab = new THREE.Mesh(new THREE.CylinderGeometry(13, 13, 12, 16), glassMat);
-    cab.position.set(220, 128, 355);
-    this.airportGroup.add(cab);
-
+    const terminal = new THREE.Mesh(new THREE.BoxGeometry(180, 32, 92), terminalMat); terminal.position.set(385, 54, 120); terminal.castShadow = true; this.airportGroup.add(terminal);
+    const facade = new THREE.Mesh(new THREE.PlaneGeometry(170, 25), glassMat); facade.rotation.y = -Math.PI / 2; facade.position.set(294, 54, 120); this.airportGroup.add(facade);
+    const tower = new THREE.Mesh(new THREE.CylinderGeometry(6, 8, 86, 16), terminalMat); tower.position.set(220, 81, 355); tower.castShadow = true; this.airportGroup.add(tower);
+    const cab = new THREE.Mesh(new THREE.CylinderGeometry(13, 13, 12, 16), glassMat); cab.position.set(220, 128, 355); this.airportGroup.add(cab);
     const taxiMark = new THREE.MeshBasicMaterial({ color: 0xffcf2f });
-    for (let z = 420; z > -1350; z -= 24) {
-      const m = new THREE.Mesh(new THREE.PlaneGeometry(0.35, 12), taxiMark);
-      m.rotation.x = -Math.PI / 2;
-      m.position.set(120, runwayY + 0.02, z);
-      this.airportGroup.add(m);
-    }
-
+    for (let z = 420; z > -1350; z -= 24) { const m = new THREE.Mesh(new THREE.PlaneGeometry(0.35, 12), taxiMark); m.rotation.x = -Math.PI / 2; m.position.set(120, runwayY + 0.02, z); this.airportGroup.add(m); }
     const lightMat = new THREE.MeshBasicMaterial({ color: 0xfff8df });
-    for (let z = 220; z > -length + 260; z -= 50) {
-      for (const x of [-width / 2 - 1, width / 2 + 1]) {
-        const light = new THREE.Mesh(new THREE.SphereGeometry(0.36, 8, 8), lightMat);
-        light.position.set(x, runwayY + 0.3, z);
-        this.airportGroup.add(light);
-        this.runwayLights.push(light);
-      }
-    }
-
+    for (let z = 220; z > -length + 260; z -= 50) for (const x of [-width / 2 - 1, width / 2 + 1]) { const light = new THREE.Mesh(new THREE.SphereGeometry(0.36, 8, 8), lightMat); light.position.set(x, runwayY + 0.3, z); this.airportGroup.add(light); this.runwayLights.push(light); }
     this.papiLights = [];
-    for (let i = 0; i < 4; i++) {
-      const papi = new THREE.Mesh(new THREE.BoxGeometry(1.15, 0.75, 1.15), new THREE.MeshBasicMaterial({ color: 0xffffff }));
-      papi.position.set(40 + i * 4.5, runwayY + 0.55, 60);
-      this.airportGroup.add(papi);
-      this.papiLights.push(papi);
-    }
-
+    for (let i = 0; i < 4; i++) { const papi = new THREE.Mesh(new THREE.BoxGeometry(1.15, 0.75, 1.15), new THREE.MeshBasicMaterial({ color: 0xffffff })); papi.position.set(40 + i * 4.5, runwayY + 0.55, 60); this.airportGroup.add(papi); this.papiLights.push(papi); }
     this.scene.add(this.airportGroup);
   }
 
   private buildTerrain() {
     this.terrainGroup = new THREE.Group();
-    const ground = new THREE.Mesh(
-      new THREE.PlaneGeometry(60000, 60000),
-      new THREE.MeshStandardMaterial({ color: 0x4c704a, roughness: 0.96, metalness: 0.02 }),
-    );
-    ground.rotation.x = -Math.PI / 2;
-    ground.position.y = 37.85;
-    ground.receiveShadow = true;
-    this.terrainGroup.add(ground);
-
+    const ground = new THREE.Mesh(new THREE.PlaneGeometry(60000, 60000), new THREE.MeshStandardMaterial({ color: 0x4c704a, roughness: 0.96, metalness: 0.02 }));
+    ground.rotation.x = -Math.PI / 2; ground.position.y = 37.85; ground.receiveShadow = true; this.terrainGroup.add(ground);
     const buildingGeo = new THREE.BoxGeometry(1, 1, 1);
     const buildingMat = new THREE.MeshStandardMaterial({ color: 0x707b84, roughness: 0.55, metalness: 0.25 });
-    const city = new THREE.InstancedMesh(buildingGeo, buildingMat, 220);
-    const matrix = new THREE.Matrix4();
-    const pos = new THREE.Vector3();
-    const quat = new THREE.Quaternion();
-    const scale = new THREE.Vector3();
-    for (let i = 0; i < 220; i++) {
-      const angle = (i / 220) * Math.PI * 2 + Math.random() * 0.08;
-      const radius = 1700 + Math.random() * 3600;
-      pos.set(Math.cos(angle) * radius, 38 + 20 + Math.random() * 90, Math.sin(angle) * radius);
-      scale.set(25 + Math.random() * 70, 45 + Math.random() * 180, 25 + Math.random() * 70);
-      quat.identity();
-      matrix.compose(pos, quat, scale);
-      city.setMatrixAt(i, matrix);
-    }
-    city.instanceMatrix.needsUpdate = true;
-    city.castShadow = true;
-    city.receiveShadow = true;
-    this.terrainGroup.add(city);
-
-    for (let i = 0; i < 12; i++) {
-      const mountain = new THREE.Mesh(
-        new THREE.ConeGeometry(1700 + Math.random() * 900, 1500 + Math.random() * 1200, 14),
-        new THREE.MeshStandardMaterial({ color: 0x50634f, roughness: 1 }),
-      );
-      const a = (i / 12) * Math.PI * 2;
-      const r = 8500 + Math.random() * 3500;
-      mountain.position.set(Math.cos(a) * r, 700, Math.sin(a) * r);
-      this.terrainGroup.add(mountain);
-    }
+    const city = new THREE.InstancedMesh(buildingGeo, buildingMat, 220); const matrix = new THREE.Matrix4(); const pos = new THREE.Vector3(); const quat = new THREE.Quaternion(); const scale = new THREE.Vector3();
+    for (let i = 0; i < 220; i++) { const angle = (i / 220) * Math.PI * 2 + Math.random() * 0.08; const radius = 1700 + Math.random() * 3600; pos.set(Math.cos(angle) * radius, 58 + Math.random() * 90, Math.sin(angle) * radius); scale.set(25 + Math.random() * 70, 45 + Math.random() * 180, 25 + Math.random() * 70); quat.identity(); matrix.compose(pos, quat, scale); city.setMatrixAt(i, matrix); }
+    city.instanceMatrix.needsUpdate = true; city.castShadow = true; city.receiveShadow = true; this.terrainGroup.add(city);
+    for (let i = 0; i < 12; i++) { const mountain = new THREE.Mesh(new THREE.ConeGeometry(1700 + Math.random() * 900, 1500 + Math.random() * 1200, 14), new THREE.MeshStandardMaterial({ color: 0x50634f, roughness: 1 })); const a = (i / 12) * Math.PI * 2; const r = 8500 + Math.random() * 3500; mountain.position.set(Math.cos(a) * r, 700, Math.sin(a) * r); this.terrainGroup.add(mountain); }
     this.scene.add(this.terrainGroup);
   }
 
   private buildWeather() {
-    const count = 22000;
-    const positions = new Float32Array(count * 3);
-    for (let i = 0; i < count; i++) {
-      positions[i * 3] = (Math.random() - 0.5) * 1600;
-      positions[i * 3 + 1] = Math.random() * 900;
-      positions[i * 3 + 2] = (Math.random() - 0.5) * 1600;
-    }
-    const geometry = new THREE.BufferGeometry();
-    geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
-    this.rainParticles = new THREE.Points(geometry, new THREE.PointsMaterial({ color: 0xb8d6e8, size: 1.2, transparent: true, opacity: 0.52, depthWrite: false }));
-    this.rainParticles.visible = false;
-    this.scene.add(this.rainParticles);
+    const count = 22000, positions = new Float32Array(count * 3);
+    for (let i = 0; i < count; i++) { positions[i * 3] = (Math.random() - 0.5) * 1600; positions[i * 3 + 1] = Math.random() * 900; positions[i * 3 + 2] = (Math.random() - 0.5) * 1600; }
+    const geometry = new THREE.BufferGeometry(); geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+    this.rainParticles = new THREE.Points(geometry, new THREE.PointsMaterial({ color: 0xb8d6e8, size: 1.2, transparent: true, opacity: 0.52, depthWrite: false })); this.rainParticles.visible = false; this.scene.add(this.rainParticles);
   }
 
   public applyTimeAndWeather(timeOfDay: TimeOfDay, weather: WeatherType) {
     const skyMaterial = this.skyMesh.material as THREE.MeshBasicMaterial;
     switch (timeOfDay) {
-      case 'dawn':
-        skyMaterial.color.setHex(0xd79a78); this.sunLight.color.setHex(0xffbf91); this.sunLight.intensity = 1.1; this.hemiLight.intensity = 0.72; break;
-      case 'sunset':
-        skyMaterial.color.setHex(0xc56b56); this.sunLight.color.setHex(0xffa36d); this.sunLight.intensity = 1.0; this.hemiLight.intensity = 0.62; break;
-      case 'night':
-        skyMaterial.color.setHex(0x050b18); this.sunLight.color.setHex(0x6f86b8); this.sunLight.intensity = 0.08; this.hemiLight.intensity = 0.28; break;
-      default:
-        skyMaterial.color.setHex(0x79aee0); this.sunLight.color.setHex(0xfff2d7); this.sunLight.intensity = 2.0; this.hemiLight.intensity = 1.15;
+      case 'dawn': skyMaterial.color.setHex(0xd79a78); this.sunLight.color.setHex(0xffbf91); this.sunLight.intensity = 1.1; this.hemiLight.intensity = 0.72; break;
+      case 'sunset': skyMaterial.color.setHex(0xc56b56); this.sunLight.color.setHex(0xffa36d); this.sunLight.intensity = 1.0; this.hemiLight.intensity = 0.62; break;
+      case 'night': skyMaterial.color.setHex(0x050b18); this.sunLight.color.setHex(0x6f86b8); this.sunLight.intensity = 0.08; this.hemiLight.intensity = 0.28; break;
+      default: skyMaterial.color.setHex(0x79aee0); this.sunLight.color.setHex(0xfff2d7); this.sunLight.intensity = 2.0; this.hemiLight.intensity = 1.15;
     }
-    if (this.scene.fog instanceof THREE.FogExp2) {
-      const density = weather === 'fog' ? 0.0008 : weather === 'storm' ? 0.00024 : weather === 'overcast' ? 0.00013 : 0.000055;
-      this.scene.fog.density = density;
-      this.scene.fog.color.copy(skyMaterial.color);
-    }
-    const rainy = weather === 'rain' || weather === 'storm';
-    this.rainParticles.visible = rainy;
+    if (this.scene.fog instanceof THREE.FogExp2) { const density = weather === 'fog' ? 0.0008 : weather === 'storm' ? 0.00024 : weather === 'overcast' ? 0.00013 : 0.000055; this.scene.fog.density = density; this.scene.fog.color.copy(skyMaterial.color); }
+    const rainy = weather === 'rain' || weather === 'storm'; this.rainParticles.visible = rainy;
     if (weather === 'storm') this.sunLight.intensity *= 0.42;
   }
 
   public update(state: FlightState, deltaSec: number) {
     if (this.isDestroyed) return;
     this.elapsed += deltaSec;
-
     this.aircraftGroup.position.set(state.x, state.y, state.z);
-    this.aircraftGroup.rotation.order = 'YXZ';
-    this.aircraftGroup.rotation.y = state.yaw;
-    this.aircraftGroup.rotation.x = state.pitch;
-    this.aircraftGroup.rotation.z = state.roll;
-
-    const fanSpeed = THREE.MathUtils.clamp(state.n1 / 100, 0, 1) * deltaSec * 55;
-    for (const fan of this.fanMeshes) fan.rotation.z += fanSpeed;
-    const gear = THREE.MathUtils.clamp(state.gearPosition, 0, 1);
-    if (this.gearGroup) {
-      this.gearGroup.scale.y = 0.25 + gear * 0.75;
-      this.gearGroup.position.y = (1 - gear) * 1.5;
-    }
-    const flap = THREE.MathUtils.degToRad(state.flapsAngle || 0);
-    this.flapMeshes.forEach((mesh) => { mesh.rotation.x = flap * 0.72; });
+    this.aircraftGroup.rotation.order = 'YXZ'; this.aircraftGroup.rotation.y = state.yaw; this.aircraftGroup.rotation.x = state.pitch; this.aircraftGroup.rotation.z = state.roll;
+    const fanSpeed = THREE.MathUtils.clamp(state.n1 / 100, 0, 1) * deltaSec * 55; for (const fan of this.fanMeshes) fan.rotation.z += fanSpeed;
+    const gear = THREE.MathUtils.clamp(state.gearPosition, 0, 1); if (this.gearGroup) { this.gearGroup.scale.y = 0.25 + gear * 0.75; this.gearGroup.position.y = (1 - gear) * 1.5; }
+    const flap = THREE.MathUtils.degToRad(state.flapsAngle || 0); this.flapMeshes.forEach((mesh) => { mesh.rotation.x = flap * 0.72; });
     this.spoilerMeshes.forEach((mesh) => { mesh.rotation.x = -(state.spoilersPosition || 0) * 0.9; });
-    this.elevator.rotation.x = state.pitchInput * 0.35;
-    this.rudder.rotation.y = state.yawInput * 0.35;
-
-    if (this.rainParticles.visible) {
-      this.rainParticles.position.set(state.x, state.y, state.z);
-      const attr = this.rainParticles.geometry.getAttribute('position') as THREE.BufferAttribute;
-      const array = attr.array as Float32Array;
-      for (let i = 1; i < array.length; i += 3) {
-        array[i] -= deltaSec * 480;
-        if (array[i] < -150) array[i] = 850;
-      }
-      attr.needsUpdate = true;
-    }
-
-    const radioAlt = Math.max(0, state.radioAltitudeFt);
-    const dist = Math.max(1, Math.abs(state.z - 180));
-    const angle = THREE.MathUtils.radToDeg(Math.atan2(radioAlt * 0.3048, dist));
-    const white = angle > 3.2 ? 4 : angle > 2.8 ? 3 : angle > 2.45 ? 2 : angle > 2.1 ? 1 : 0;
-    this.papiLights.forEach((papi, i) => {
-      (papi.material as THREE.MeshBasicMaterial).color.setHex(i < white ? 0xffffff : 0xff2418);
-    });
-
+    this.elevator.rotation.x = state.pitchInput * 0.35; this.rudder.rotation.y = state.yawInput * 0.35;
+    if (this.rainParticles.visible) { this.rainParticles.position.set(state.x, state.y, state.z); const attr = this.rainParticles.geometry.getAttribute('position') as THREE.BufferAttribute; const arr = attr.array as Float32Array; for (let i = 1; i < arr.length; i += 3) { arr[i] -= deltaSec * 260; if (arr[i] < -20) arr[i] += 900; } attr.needsUpdate = true; }
     this.updateCamera(state, deltaSec);
     this.renderer.render(this.scene, this.camera);
   }
 
   private updateCamera(state: FlightState, deltaSec: number) {
     const aircraftPos = new THREE.Vector3(state.x, state.y, state.z);
-    const forward = new THREE.Vector3(Math.sin(state.yaw), 0, Math.cos(state.yaw));
-    const right = new THREE.Vector3(Math.cos(state.yaw), 0, -Math.sin(state.yaw));
+    const forward = new THREE.Vector3(Math.sin(state.yaw), 0, Math.cos(state.yaw)).normalize();
+    const up = new THREE.Vector3(0, 1, 0);
+    if (!this.cameraInitialized) { this.camera.position.copy(aircraftPos).add(new THREE.Vector3(0, 7, -this.cameraDistance)); this.cameraInitialized = true; }
     let desired = new THREE.Vector3();
-    let look = aircraftPos.clone();
-
-    if (this.cameraMode === 'cockpit') {
-      desired.copy(aircraftPos).add(new THREE.Vector3(0, 1.45, 0));
-      desired.add(forward.clone().multiplyScalar(1.6));
-      look.copy(desired).add(forward.clone().multiplyScalar(100));
-      look.y += Math.sin(this.cameraOrbitPitch) * 18;
-    } else if (this.cameraMode === 'wing') {
-      desired.copy(aircraftPos).add(right.clone().multiplyScalar(3.5)).add(new THREE.Vector3(0, 1.0, 0));
-      desired.add(forward.clone().multiplyScalar(1));
-      look.copy(aircraftPos).add(forward.clone().multiplyScalar(18)).add(new THREE.Vector3(0, -1, 0));
-    } else if (this.cameraMode === 'gear') {
-      desired.copy(aircraftPos).add(new THREE.Vector3(0, -2.0, 0)).add(forward.clone().multiplyScalar(-4));
-      look.copy(aircraftPos).add(forward.clone().multiplyScalar(60)).add(new THREE.Vector3(0, -2, 0));
-    } else {
-      const yaw = state.yaw + this.cameraOrbitYaw;
-      const horizontal = new THREE.Vector3(Math.sin(yaw), 0, Math.cos(yaw)).multiplyScalar(-this.cameraDistance);
-      desired.copy(aircraftPos).add(horizontal);
-      desired.y += 5 + Math.sin(this.cameraOrbitPitch) * this.cameraDistance * 0.45;
-      look.copy(aircraftPos).add(forward.clone().multiplyScalar(22));
-      look.y += 2.0;
-    }
-
-    const positionAlpha = 1 - Math.exp(-deltaSec * (this.cameraMode === 'cockpit' ? 18 : 7));
-    const lookAlpha = 1 - Math.exp(-deltaSec * 9);
-    if (!this.cameraInitialized) {
-      this.camera.position.copy(desired);
-      this.cameraTargetPosition.copy(desired);
-      this.cameraTargetLook.copy(look);
-      this.cameraInitialized = true;
-    }
-    this.cameraTargetPosition.lerp(desired, positionAlpha);
-    this.cameraTargetLook.lerp(look, lookAlpha);
-    this.camera.position.lerp(this.cameraTargetPosition, Math.min(1, positionAlpha * 1.35));
-    this.camera.lookAt(this.cameraTargetLook);
-
-    const speed = Math.min(1, state.airspeedKnots / 450);
-    this.camera.fov = THREE.MathUtils.lerp(this.camera.fov, this.cameraMode === 'cockpit' ? 67 + speed * 4 : 55 + speed * 6, Math.min(1, deltaSec * 4));
-    this.camera.updateProjectionMatrix();
+    if (this.cameraMode === 'cockpit') { desired.copy(aircraftPos).add(up.clone().multiplyScalar(2.2)); this.cameraTargetLook.copy(aircraftPos).add(forward.multiplyScalar(120)).add(up.clone().multiplyScalar(2)); }
+    else { desired.copy(aircraftPos).add(up.clone().multiplyScalar(5)).add(forward.clone().multiplyScalar(-this.cameraDistance)); desired.applyAxisAngle(up, this.cameraOrbitYaw); desired.y += Math.sin(this.cameraOrbitPitch) * this.cameraDistance * 0.28; this.cameraTargetLook.copy(aircraftPos).add(up.clone().multiplyScalar(2)); }
+    const smooth = 1 - Math.exp(-deltaSec * 5.5); this.camera.position.lerp(desired, smooth); this.cameraTargetPosition.lerp(aircraftPos, smooth); this.camera.lookAt(this.cameraTargetLook);
   }
 
-  private onWindowResize = () => {
-    if (this.isDestroyed) return;
-    const width = Math.max(1, this.container.clientWidth);
-    const height = Math.max(1, this.container.clientHeight);
-    this.camera.aspect = width / height;
-    this.camera.updateProjectionMatrix();
-    this.renderer.setSize(width, height);
-  };
-
-  public destroy() {
-    if (this.isDestroyed) return;
-    this.isDestroyed = true;
-    window.removeEventListener('resize', this.onWindowResize);
-    this.scene.traverse((object) => {
-      const mesh = object as THREE.Mesh;
-      if (mesh.geometry) mesh.geometry.dispose();
-      const material = mesh.material as THREE.Material | THREE.Material[] | undefined;
-      if (Array.isArray(material)) material.forEach((m) => m.dispose());
-      else material?.dispose();
-    });
-    this.renderer.dispose();
-    if (this.container.contains(this.renderer.domElement)) this.container.removeChild(this.renderer.domElement);
-  }
+  private onWindowResize = () => { if (this.isDestroyed) return; const width = Math.max(1, this.container.clientWidth), height = Math.max(1, this.container.clientHeight); this.camera.aspect = width / height; this.camera.updateProjectionMatrix(); this.renderer.setSize(width, height); };
+  public destroy() { this.isDestroyed = true; window.removeEventListener('resize', this.onWindowResize); this.renderer.dispose(); this.renderer.domElement.remove(); }
 }
