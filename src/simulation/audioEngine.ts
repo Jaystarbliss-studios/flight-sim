@@ -1,268 +1,228 @@
 import { FlightState } from '../types';
 
+/** Lightweight layered WebAudio mix. No external audio files are required for the simulator build. */
 export class AudioEngine {
   private ctx: AudioContext | null = null;
-  private isMuted: boolean = false;
-  private isInitialized: boolean = false;
+  private isMuted = false;
+  private isInitialized = false;
 
-  // Turbofan low rumble
+  private master!: GainNode;
   private rumbleOsc: OscillatorNode | null = null;
   private rumbleGain: GainNode | null = null;
-
-  // Turbine high-pitch whine
   private turbineOsc: OscillatorNode | null = null;
   private turbineGain: GainNode | null = null;
-
-  // Jet exhaust & wind noise
   private noiseNode: AudioBufferSourceNode | null = null;
   private windGain: GainNode | null = null;
   private groundGain: GainNode | null = null;
-
-  // Stall alert
   private stallOsc: OscillatorNode | null = null;
   private stallGain: GainNode | null = null;
-  private stallInterval: number | null = null;
 
-  // GPWS callouts tracking
-  private lastCalloutAlt: number = 99999;
-  private hasSpokenRetard: boolean = false;
+  private lastCalloutAlt = 99999;
+  private hasSpokenRetard = false;
+  private previousGearDown: boolean | null = null;
+  private previousFlapsIndex: number | null = null;
+  private previousPhase: FlightState['phase'] | null = null;
+  private previousBrakes = false;
 
   public init() {
-    if (this.isInitialized) return;
+    if (this.isInitialized || typeof window === 'undefined') return;
     try {
-      const AudioCtx = window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
+      const AudioCtx = window.AudioContext || (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
       if (!AudioCtx) return;
       this.ctx = new AudioCtx();
+      this.master = this.ctx.createGain();
+      this.master.gain.value = 0.7;
+      this.master.connect(this.ctx.destination);
 
-      // 1. Turbofan low rumble
       this.rumbleOsc = this.ctx.createOscillator();
       this.rumbleOsc.type = 'triangle';
-      this.rumbleOsc.frequency.setValueAtTime(45, this.ctx.currentTime);
       this.rumbleGain = this.ctx.createGain();
-      this.rumbleGain.gain.setValueAtTime(0, this.ctx.currentTime);
-      this.rumbleOsc.connect(this.rumbleGain);
-      this.rumbleGain.connect(this.ctx.destination);
+      this.rumbleGain.gain.value = 0;
+      this.rumbleOsc.connect(this.rumbleGain).connect(this.master);
       this.rumbleOsc.start();
 
-      // 2. Turbine whine
       this.turbineOsc = this.ctx.createOscillator();
       this.turbineOsc.type = 'sawtooth';
-      this.turbineOsc.frequency.setValueAtTime(320, this.ctx.currentTime);
       const turbineFilter = this.ctx.createBiquadFilter();
       turbineFilter.type = 'bandpass';
-      turbineFilter.frequency.setValueAtTime(1400, this.ctx.currentTime);
-      turbineFilter.Q.setValueAtTime(4.0, this.ctx.currentTime);
-
+      turbineFilter.Q.value = 3.5;
       this.turbineGain = this.ctx.createGain();
-      this.turbineGain.gain.setValueAtTime(0, this.ctx.currentTime);
-      this.turbineOsc.connect(turbineFilter);
-      turbineFilter.connect(this.turbineGain);
-      this.turbineGain.connect(this.ctx.destination);
+      this.turbineGain.gain.value = 0;
+      this.turbineOsc.connect(turbineFilter).connect(this.turbineGain).connect(this.master);
       this.turbineOsc.start();
 
-      // 3. Noise generator (Wind + Ground Roll)
       const bufferSize = this.ctx.sampleRate * 2;
       const noiseBuffer = this.ctx.createBuffer(1, bufferSize, this.ctx.sampleRate);
-      const output = noiseBuffer.getChannelData(0);
-      for (let i = 0; i < bufferSize; i++) {
-        output[i] = Math.random() * 2 - 1;
-      }
-
+      const data = noiseBuffer.getChannelData(0);
+      for (let i = 0; i < data.length; i++) data[i] = Math.random() * 2 - 1;
       this.noiseNode = this.ctx.createBufferSource();
       this.noiseNode.buffer = noiseBuffer;
       this.noiseNode.loop = true;
 
-      // Wind filter & gain
       const windFilter = this.ctx.createBiquadFilter();
       windFilter.type = 'lowpass';
-      windFilter.frequency.setValueAtTime(800, this.ctx.currentTime);
+      windFilter.frequency.value = 900;
       this.windGain = this.ctx.createGain();
-      this.windGain.gain.setValueAtTime(0, this.ctx.currentTime);
-      this.noiseNode.connect(windFilter);
-      windFilter.connect(this.windGain);
-      this.windGain.connect(this.ctx.destination);
+      this.windGain.gain.value = 0;
+      this.noiseNode.connect(windFilter).connect(this.windGain).connect(this.master);
 
-      // Ground roll filter & gain
       const groundFilter = this.ctx.createBiquadFilter();
       groundFilter.type = 'lowpass';
-      groundFilter.frequency.setValueAtTime(160, this.ctx.currentTime);
+      groundFilter.frequency.value = 180;
       this.groundGain = this.ctx.createGain();
-      this.groundGain.gain.setValueAtTime(0, this.ctx.currentTime);
-      this.noiseNode.connect(groundFilter);
-      groundFilter.connect(this.groundGain);
-      this.groundGain.connect(this.ctx.destination);
-
+      this.groundGain.gain.value = 0;
+      this.noiseNode.connect(groundFilter).connect(this.groundGain).connect(this.master);
       this.noiseNode.start();
 
-      // 4. Stall alert horn
       this.stallOsc = this.ctx.createOscillator();
-      this.stallOsc.type = 'sawtooth';
-      this.stallOsc.frequency.setValueAtTime(650, this.ctx.currentTime);
+      this.stallOsc.type = 'square';
+      this.stallOsc.frequency.value = 650;
       this.stallGain = this.ctx.createGain();
-      this.stallGain.gain.setValueAtTime(0, this.ctx.currentTime);
-      this.stallOsc.connect(this.stallGain);
-      this.stallGain.connect(this.ctx.destination);
+      this.stallGain.gain.value = 0;
+      this.stallOsc.connect(this.stallGain).connect(this.master);
       this.stallOsc.start();
 
       this.isInitialized = true;
     } catch {
-      // Audio context permission or unsupported
+      this.ctx = null;
     }
   }
 
   public update(state: FlightState) {
     if (!this.isInitialized || !this.ctx || this.isMuted) return;
-
-    if (this.ctx.state === 'suspended') {
-      this.ctx.resume();
-    }
-
+    if (this.ctx.state === 'suspended') void this.ctx.resume();
     const t = this.ctx.currentTime;
-    const n1Frac = Math.max(0, Math.min(1.0, (state.n1 - 20) / 80));
-    const isAirborne = state.radioAltitudeFt > 5;
+    const n1 = Math.max(0, Math.min(1, (state.n1 - 18) / 82));
+    const speed = Math.max(0, Math.min(1, state.airspeedKnots / 420));
+    const airborne = state.radioAltitudeFt > 8;
 
-    // Engine Audio
-    if (state.enginesRunning && this.rumbleGain && this.rumbleOsc && this.turbineGain && this.turbineOsc) {
-      const baseGain = 0.08 + n1Frac * 0.22;
-      this.rumbleGain.gain.setTargetAtTime(baseGain, t, 0.1);
-      this.rumbleOsc.frequency.setTargetAtTime(35 + n1Frac * 55, t, 0.1);
-
-      const whineGain = 0.03 + n1Frac * 0.15;
-      this.turbineGain.gain.setTargetAtTime(whineGain, t, 0.1);
-      this.turbineOsc.frequency.setTargetAtTime(280 + n1Frac * 580, t, 0.1);
-    } else if (this.rumbleGain && this.turbineGain) {
-      this.rumbleGain.gain.setTargetAtTime(0, t, 0.2);
-      this.turbineGain.gain.setTargetAtTime(0, t, 0.2);
+    if (this.rumbleGain && this.rumbleOsc && this.turbineGain && this.turbineOsc) {
+      const running = state.enginesRunning;
+      this.rumbleGain.gain.setTargetAtTime(running ? 0.045 + n1 * 0.19 : 0, t, 0.08);
+      this.rumbleOsc.frequency.setTargetAtTime(running ? 38 + n1 * 52 : 24, t, 0.08);
+      this.turbineGain.gain.setTargetAtTime(running ? 0.018 + n1 * 0.11 : 0, t, 0.08);
+      this.turbineOsc.frequency.setTargetAtTime(250 + n1 * 1100, t, 0.08);
     }
 
-    // Wind Sound
-    if (this.windGain) {
-      const windFrac = Math.min(1.0, state.airspeedKnots / 400);
-      this.windGain.gain.setTargetAtTime(windFrac * 0.18, t, 0.15);
-    }
+    this.windGain?.gain.setTargetAtTime(speed * speed * 0.2, t, 0.12);
+    const groundLevel = !airborne && state.airspeedKnots > 4 ? Math.min(1, state.airspeedKnots / 150) : 0;
+    this.groundGain?.gain.setTargetAtTime(groundLevel * 0.18, t, 0.07);
+    this.stallGain?.gain.setTargetAtTime(state.isStalled && airborne ? 0.16 : 0, t, 0.03);
 
-    // Ground Roll
-    if (this.groundGain) {
-      if (!isAirborne && state.airspeedKnots > 3) {
-        const groundFrac = Math.min(1.0, state.airspeedKnots / 140);
-        this.groundGain.gain.setTargetAtTime(groundFrac * 0.15, t, 0.1);
-      } else {
-        this.groundGain.gain.setTargetAtTime(0, t, 0.05);
-      }
-    }
-
-    // Stall Horn
-    if (state.isStalled && isAirborne && this.stallGain) {
-      this.stallGain.gain.setTargetAtTime(0.2, t, 0.05);
-    } else if (this.stallGain) {
-      this.stallGain.gain.setTargetAtTime(0, t, 0.05);
-    }
-
-    // GPWS Audio Callouts
+    this.detectSystemChanges(state);
     this.checkGpwsCallouts(state);
+  }
+
+  private detectSystemChanges(state: FlightState) {
+    if (this.previousGearDown !== null && this.previousGearDown !== state.gearDown) this.playMechanical('gear');
+    if (this.previousFlapsIndex !== null && this.previousFlapsIndex !== state.flapsIndex) this.playMechanical('flap');
+    if (this.previousBrakes !== state.brakesActive && state.brakesActive) this.playMechanical('brake');
+    if (this.previousPhase !== null && state.phase === 'landing' && this.previousPhase !== 'landing') this.playChime();
+    this.previousGearDown = state.gearDown;
+    this.previousFlapsIndex = state.flapsIndex;
+    this.previousBrakes = state.brakesActive;
+    this.previousPhase = state.phase;
+  }
+
+  private playMechanical(kind: 'gear' | 'flap' | 'brake') {
+    if (!this.ctx || this.isMuted) return;
+    const osc = this.ctx.createOscillator();
+    const gain = this.ctx.createGain();
+    const filter = this.ctx.createBiquadFilter();
+    const now = this.ctx.currentTime;
+    osc.type = kind === 'brake' ? 'triangle' : 'square';
+    osc.frequency.setValueAtTime(kind === 'gear' ? 115 : kind === 'flap' ? 180 : 70, now);
+    osc.frequency.exponentialRampToValueAtTime(kind === 'gear' ? 65 : 90, now + 0.22);
+    filter.type = 'lowpass';
+    filter.frequency.value = kind === 'brake' ? 420 : 900;
+    gain.gain.setValueAtTime(0.001, now);
+    gain.gain.exponentialRampToValueAtTime(kind === 'brake' ? 0.08 : 0.045, now + 0.015);
+    gain.gain.exponentialRampToValueAtTime(0.001, now + 0.28);
+    osc.connect(filter).connect(gain).connect(this.master);
+    osc.start(now);
+    osc.stop(now + 0.3);
   }
 
   private checkGpwsCallouts(state: FlightState) {
     if (state.verticalSpeedFpm >= -100) {
-      // Reset callouts on climb
       if (state.radioAltitudeFt > 600) {
         this.lastCalloutAlt = 99999;
         this.hasSpokenRetard = false;
       }
       return;
     }
-
     const radAlt = state.radioAltitudeFt;
-    const callouts = [1000, 500, 400, 300, 200, 100, 50, 40, 30, 20, 10];
-
-    for (const threshold of callouts) {
+    for (const threshold of [1000, 500, 400, 300, 200, 100, 50, 40, 30, 20, 10]) {
       if (radAlt <= threshold && this.lastCalloutAlt > threshold) {
         this.lastCalloutAlt = threshold;
-        this.playVoiceCallout(`${threshold}`);
+        this.playVoiceCallout(String(threshold));
         break;
       }
     }
-
     if (radAlt <= 15 && !this.hasSpokenRetard && state.throttle > 0.1) {
       this.hasSpokenRetard = true;
       this.playVoiceCallout('Retard');
     }
-
-    if (state.isPullUp) {
+    if (state.isPullUp && this.lastCalloutAlt !== -1) {
+      this.lastCalloutAlt = -1;
       this.playVoiceCallout('Pull Up');
     }
   }
 
   public playTouchdownScreech() {
-    if (!this.ctx) return;
-    try {
-      const osc = this.ctx.createOscillator();
-      const gain = this.ctx.createGain();
-      const filter = this.ctx.createBiquadFilter();
-
-      osc.type = 'triangle';
-      osc.frequency.setValueAtTime(850, this.ctx.currentTime);
-      osc.frequency.exponentialRampToValueAtTime(300, this.ctx.currentTime + 0.35);
-
-      filter.type = 'highpass';
-      filter.frequency.setValueAtTime(600, this.ctx.currentTime);
-
-      gain.gain.setValueAtTime(0.3, this.ctx.currentTime);
-      gain.gain.exponentialRampToValueAtTime(0.001, this.ctx.currentTime + 0.4);
-
-      osc.connect(filter);
-      filter.connect(gain);
-      gain.connect(this.ctx.destination);
-
-      osc.start();
-      osc.stop(this.ctx.currentTime + 0.45);
-    } catch {
-      // ignore
-    }
+    if (!this.ctx || this.isMuted) return;
+    const now = this.ctx.currentTime;
+    const osc = this.ctx.createOscillator();
+    const gain = this.ctx.createGain();
+    const filter = this.ctx.createBiquadFilter();
+    osc.type = 'sawtooth';
+    osc.frequency.setValueAtTime(1100, now);
+    osc.frequency.exponentialRampToValueAtTime(280, now + 0.42);
+    filter.type = 'highpass';
+    filter.frequency.value = 520;
+    gain.gain.setValueAtTime(0.18, now);
+    gain.gain.exponentialRampToValueAtTime(0.001, now + 0.45);
+    osc.connect(filter).connect(gain).connect(this.master);
+    osc.start(now);
+    osc.stop(now + 0.5);
   }
 
   public playChime() {
-    if (!this.ctx) return;
-    try {
+    if (!this.ctx || this.isMuted) return;
+    const now = this.ctx.currentTime;
+    const gain = this.ctx.createGain();
+    gain.gain.setValueAtTime(0.12, now);
+    gain.gain.exponentialRampToValueAtTime(0.001, now + 0.55);
+    gain.connect(this.master);
+    for (const [freq, offset] of [[880, 0], [660, 0.12]]) {
       const osc = this.ctx.createOscillator();
-      const gain = this.ctx.createGain();
       osc.type = 'sine';
-      osc.frequency.setValueAtTime(800, this.ctx.currentTime);
-      osc.frequency.setValueAtTime(600, this.ctx.currentTime + 0.15);
-
-      gain.gain.setValueAtTime(0.2, this.ctx.currentTime);
-      gain.gain.exponentialRampToValueAtTime(0.001, this.ctx.currentTime + 0.7);
-
+      osc.frequency.value = freq;
       osc.connect(gain);
-      gain.connect(this.ctx.destination);
-      osc.start();
-      osc.stop(this.ctx.currentTime + 0.75);
-    } catch {
-      // ignore
+      osc.start(now + offset);
+      osc.stop(now + offset + 0.35);
     }
   }
 
   public playVoiceCallout(text: string) {
-    if (typeof window === 'undefined' || !('speechSynthesis' in window)) return;
+    if (typeof window === 'undefined' || !('speechSynthesis' in window) || this.isMuted) return;
     try {
       const utterance = new SpeechSynthesisUtterance(text);
-      utterance.rate = 1.15;
-      utterance.pitch = 0.9;
-      utterance.volume = 0.8;
+      utterance.rate = 1.12;
+      utterance.pitch = 0.86;
+      utterance.volume = 0.75;
       window.speechSynthesis.speak(utterance);
     } catch {
-      // ignore
+      // Browser speech APIs are optional.
     }
   }
 
   public toggleMute(): boolean {
     this.isMuted = !this.isMuted;
     if (this.isMuted && this.ctx) {
-      if (this.rumbleGain) this.rumbleGain.gain.setValueAtTime(0, this.ctx.currentTime);
-      if (this.turbineGain) this.turbineGain.gain.setValueAtTime(0, this.ctx.currentTime);
-      if (this.windGain) this.windGain.gain.setValueAtTime(0, this.ctx.currentTime);
-      if (this.groundGain) this.groundGain.gain.setValueAtTime(0, this.ctx.currentTime);
-      if (this.stallGain) this.stallGain.gain.setValueAtTime(0, this.ctx.currentTime);
+      this.master.gain.setTargetAtTime(0, this.ctx.currentTime, 0.03);
+    } else if (!this.isMuted && this.ctx) {
+      this.master.gain.setTargetAtTime(0.7, this.ctx.currentTime, 0.08);
     }
     return this.isMuted;
   }
