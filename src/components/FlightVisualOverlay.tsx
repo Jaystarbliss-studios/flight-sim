@@ -7,12 +7,12 @@ export function FlightVisualOverlay({ state }: Props) {
   const bank = state.roll;
   const pitch = state.pitch;
   const speed = state.airspeedKnots;
-  const altitude = state.altitudeMeters;
+  const altitude = state.altitudeFt;
   const intensity = useMemo(() => Math.min(1, Math.max(0, (speed - 80) / 180)), [speed]);
 
   const horizonTransform = `translate(-50%, -50%) rotate(${bank * 57.2958}deg) translateY(${pitch * 170}px)`;
   const speedBlur = `${Math.round(intensity * 7)}px`;
-  const vignetteOpacity = state.phase === 'crashed' ? 0.72 : state.stallWarning ? 0.42 : 0.16;
+  const vignetteOpacity = state.phase === 'crashed' ? 0.72 : state.isStalled ? 0.42 : 0.16;
 
   return (
     <div className="absolute inset-0 pointer-events-none z-10 overflow-hidden">
@@ -41,11 +41,11 @@ export function FlightVisualOverlay({ state }: Props) {
 
       <div className="absolute bottom-6 left-6 rounded-lg border border-white/15 bg-black/20 px-3 py-2 text-[10px] tracking-widest text-white/65 backdrop-blur-sm">
         <div>AIRSPEED {Math.round(speed)} KT</div>
-        <div>ALT {Math.round(altitude * 3.28084).toLocaleString()} FT</div>
+        <div>ALT {Math.round(altitude).toLocaleString()} FT</div>
         <div>VS {Math.round(state.verticalSpeedFpm).toLocaleString()} FPM</div>
       </div>
 
-      {state.stallWarning && (
+      {state.isStalled && (
         <div className="absolute inset-x-0 top-1/2 -translate-y-1/2 text-center text-xs font-black tracking-[0.45em] text-red-300 animate-pulse">
           STALL
         </div>
